@@ -204,6 +204,7 @@ def make_log(args):
     return
 
 def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
+    args.agent = args.agent.lower()
     if args.agent == 'sac_ae':
         return SacAeAgent(
             obs_shape=obs_shape,
@@ -453,7 +454,7 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
     elif args.agent == 'dreamer':
         agent = DreamerAgent()
     elif args.agent == 'tia':
-        agent = TIAAgent()
+        agent = AgentTIA()
     else:
         assert 'agent is not supported: %s' % args.agent
 

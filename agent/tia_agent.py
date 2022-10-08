@@ -2,21 +2,78 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributions as td
 import copy
 import math
 from typing import Any, Dict, Optional, Type, Union, List
 
 import utils.util as util
 from model.decoder import make_decoder
+from model.recurrent_state_space_model import *
 from model.actor import Actor
 from model.critic import Critic
 from agent.base_agent import AgentSACBase
 from utils.pytorch_util import weight_init
 
-
 LOG_FREQ = 10000
 
-class AgentSACAE(AgentSACBase):
+
+class TIA(nn.Module):
+    """
+    TIA
+    """
+    def __init__(
+        self, obs_shape, z_dim,
+        encoder, encoder_target, device, output_type="continuous"
+    ):
+        super(TIA, self).__init__()
+
+        self.encoder = encoder
+
+        self.encoder_target = encoder_target
+        self.device = device
+
+        self.W = nn.Parameter(torch.rand(z_dim, z_dim))
+        self.output_type = output_type
+
+    def encode(
+        self, x, actions, ema=False
+    ):
+        """
+        Encoder: z_t = e(o_t, s_{t-1}, a_{t-1})
+        :param x: obs at t
+        :return: z_t, value in r2
+        """
+        batch_t, batch_b, ch, h, w = x.size()
+
+        # Obtain prev actions
+        prev_actions = actions[:-1]
+        prev_act = torch.zeros(
+            batch_b, self.encoder.action_shape,
+            device=self.device, dtype=prev_actions.dtype
+        ).unsqueeze(0)
+        prev_actions = torch.cat([prev_act, prev_actions], dim=0)
+        # Embed the pixel observation
+        prev_state = self.encoder.representation.initial_state(
+            batch_b, device=self.device
+        )
+        # Rollout model by taking the same series of actions as the real model
+        if ema:
+            with torch.no_grad():
+                embeds = self.encoder_target.observation_encoder(x)
+                prior, post = self.encoder_target.rollout.\
+                    rollout_representation(batch_t, embeds,
+                                           prev_actions, prev_state)
+        else:
+            embeds = self.encoder.observation_encoder(x)
+            prior, post = self.encoder.rollout.rollout_representation(
+                batch_t, embeds, prev_actions, prev_state
+            )
+
+        return prior, post
+
+
+class AgentTIA(AgentSACBase):
     def __init__(self, 
         obs_shape: int,
         action_shape: int,
@@ -45,15 +102,43 @@ class AgentSACAE(AgentSACBase):
         decoder_latent_lambda: float = 0.0,
         decoder_weight_lambda: float = 0.0,
         num_layers: int = 4,
-        num_filters: int = 32,
-        buildin_encoder: bool = True
+        num_filters: int = 32
     ):
-        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, buildin_encoder)
+        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters)
 
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
-        self._build_decoder(decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters)
+
+        # distractor dynamic model
+        self._build_dis_models()
+
+        # task dynamic model
+        self._build_task_models()
+
+        # joint decode
+        self._build_main_decoder()
+
+        self.train()
+        self.critic_target.train()
+
+
+    def train(self, training=True):
+        self.training = training
+        self.actor.train(training)
+        self.critic.train(training)
+        if self.decoder is not None:
+            self.decoder.train(training)
+
+    def _build_decoder(self, encoder_lr, decoder_lr, decoder_weight_lambda, decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters):
+        self.decoder = None
         if decoder_type != 'identity':
+            # create decoder
+            self.decoder = make_decoder(
+                decoder_type, obs_shape, encoder_feature_dim, num_layers,
+                num_filters
+            ).to(self.device)
+            self.decoder.apply(weight_init)
+
             # optimizer for critic encoder for reconstruction loss
             self.encoder_optimizer = torch.optim.Adam(
                 self.critic.encoder.parameters(), lr=encoder_lr
@@ -66,25 +151,35 @@ class AgentSACAE(AgentSACBase):
                 weight_decay=decoder_weight_lambda
             )
 
-        self.train()
-        self.critic_target.train()
+    def _build_dis_models(self):
+        self.dis_encoder = ...
+        self.dis_dynamics = ...
+        self.dis_decoder = ...
+        self.dis_reward = ...
+        self.dis_optimizer = torch.optim.Adam(
+            list(self.dis_encoder.parameters()) + 
+            list(self.dis_dynamics.parameters()) + 
+            list(self.dis_decoder.parameters())
+            )
+        self.dis_reward_optimizer = torch.optim.Adam(
+            self.dis_reward.parameters()
+        )
 
-    def train(self, training=True):
-        self.training = training
-        self.actor.train(training)
-        self.critic.train(training)
-        if self.decoder is not None:
-            self.decoder.train(training)
+    def _build_task_models(self):
+        self.task_encoder = ...
+        self.task_dynamics = ...
+        self.task_reward = ...
+        self.task_optimizer = torch.optim.Adam(
+            list(self.task_reward.parameters()) + 
+            list(self.task_dynamics.parameters()) + 
+            list(self.task_reward.parameters())
+            )
 
-    def _build_decoder(self, decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters):
-        self.decoder = None
-        if decoder_type != 'identity':
-            # create decoder
-            self.decoder = make_decoder(
-                decoder_type, obs_shape, encoder_feature_dim, num_layers,
-                num_filters
-            ).to(self.device)
-            self.decoder.apply(weight_init)
+    def _build_main_decoder(self):
+        self.main_mask_decoder = ...
+        self.dis_mask_decoder = ...
+        self.joint_mask_decoder = ...
+        self.joint_mask_decoder_optimizer = torch.optim.Adam(self.joint_mask_decoder.parameters())
 
     def update_decoder(self, obs, target_obs, L, step):
         h = self.critic.encoder(obs)
@@ -114,6 +209,12 @@ class AgentSACAE(AgentSACBase):
         obs, action, reward, next_obs, not_done = replay_buffer.sample()
 
         L.log('train/batch_reward', reward.mean(), step)
+
+        # main
+        embed = self.task_encoder(obs)
+        post, prior = self.task_dynamics(embed, action)
+
+
 
         self.update_critic(obs, action, reward, next_obs, not_done, L, step)
 
