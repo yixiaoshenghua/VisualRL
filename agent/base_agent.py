@@ -44,11 +44,11 @@ class AgentBase:
         self.actor_update_freq = actor_update_freq
         self.critic_target_update_freq = critic_target_update_freq
 
-        self._build_critic(obs_shape, action_shape, hidden_dim, encoder_type,
+        self.critic = self._build_critic(obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, buildin_encoder)
-        self._build_critic_target(obs_shape, action_shape, hidden_dim, encoder_type,
+        self.critic_target = self._build_critic_target(obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, buildin_encoder)
-        self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type,
+        self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
             num_layers, num_filters, buildin_encoder)
         # build optimizer
@@ -62,30 +62,33 @@ class AgentBase:
     def _build_actor(self, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
             num_layers, num_filters, buildin_encoder=True):
-        self.actor = Actor(
+        actor = Actor(
             obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
             num_layers, num_filters, buildin_encoder
         ).to(self.device)
         
         # tie encoders between actor and critic
-        self.actor.encoder.copy_conv_weights_from(self.critic.encoder)
+        actor.encoder.copy_conv_weights_from(self.critic.encoder)
+        return actor
 
     def _build_critic(self, obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim,    
             num_layers, num_filters, buildin_encoder=True):
-        self.critic = Critic(
+        critic = Critic(
             obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, buildin_encoder
         ).to(self.device)
+        return critic
 
 
     def _build_critic_target(self, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, buildin_encoder=True):
-        self.critic_target = Critic(
+        critic_target = Critic(
             obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, buildin_encoder
         ).to(self.device)
-        self.critic_target.load_state_dict(self.critic.state_dict())
+        critic_target.load_state_dict(self.critic.state_dict())
+        return critic_target
 
     def train(self, training=True):
         self.training = training
@@ -219,17 +222,17 @@ class AgentSACBase(AgentBase):
     ):
         super(AgentBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, buildin_encoder)
 
-        self._build_log_alpha(init_temperature, action_shape, alpha_lr, alpha_beta)
+        self.log_alpha = self._build_log_alpha(init_temperature, action_shape, alpha_lr, alpha_beta)
         self.log_alpha_optimizer = torch.optim.Adam(
             [self.log_alpha], lr=alpha_lr, betas=(alpha_beta, 0.999)
         )
 
     def _build_log_alpha(self, init_temperature, action_shape, alpha_lr, alpha_beta):
-        self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
-        self.log_alpha.requires_grad = True
+        log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
+        log_alpha.requires_grad = True
         # set target entropy to -|A|
         self.target_entropy = -np.prod(action_shape)
-                
+        return log_alpha        
 
     def train(self, training=True):
         super().train(training)

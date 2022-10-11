@@ -304,58 +304,6 @@ class ObservationEncoder(nn.Module):
         ).view_as(gs_) for gs_ in gs]
 
 
-# class ObservationEncoder(nn.Module):
-#     def __init__(
-#         self, depth=32, stride=2, shape=(3, 64, 64), activation=nn.ReLU,
-#         num_layers=None, feature_dim=None, output_logits=None
-#     ):
-#         super().__init__()
-#         self.convolutions = nn.Sequential(
-#             nn.Conv2d(shape[0], 1 * depth, 4, stride),
-#             activation(),
-#             nn.Conv2d(1 * depth, 2 * depth, 4, stride),
-#             activation(),
-#             nn.Conv2d(2 * depth, 4 * depth, 4, stride),
-#             activation(),
-#             nn.Conv2d(4 * depth, 8 * depth, 4, stride),
-#             activation(),
-#         )
-#         self.shape = shape
-#         self.stride = stride
-#         self.depth = depth
-#
-#     def forward(self, obs):
-#         batch_shape = obs.shape[:-3]
-#         img_shape = obs.shape[-3:]
-#         embed = self.convolutions(obs.reshape(-1, *img_shape) / 255. - 0.5)
-#         embed = torch.reshape(embed, (*batch_shape, -1))
-#         return embed
-#
-#     def spatial_attention(self, obs):
-#         spatial_softmax = nn.Softmax(1)
-#         img_shape = obs.shape[-3:]
-#         gs = [None] * len(self.convolutions)
-#         x = obs
-#         for idx, layer in enumerate(self.convolutions):
-#             x = layer(
-#                 x.reshape(-1, *img_shape) / 255. - 0.5
-#             ) if idx == 0 else layer(x)
-#             gs[idx] = x
-#         gs = [gs_.pow(2).mean(1) for gs_ in gs]
-#         return [spatial_softmax(
-#             gs_.view(*gs_.size()[:1], -1)
-#         ).view_as(gs_) for gs_ in gs]
-#
-#     @property
-#     def feature_dim(self):
-#         conv1_shape = conv_out_shape(self.shape[1:], 0, 4, self.stride)
-#         conv2_shape = conv_out_shape(conv1_shape, 0, 4, self.stride)
-#         conv3_shape = conv_out_shape(conv2_shape, 0, 4, self.stride)
-#         conv4_shape = conv_out_shape(conv3_shape, 0, 4, self.stride)
-#         embed_size = 8 * self.depth * np.prod(conv4_shape).item()
-#         return embed_size
-
-
 class CarlaObservationEncoder(nn.Module):
     def __init__(
         self, depth=32, stride=1, shape=(3, 64, 64), output_logits=False,

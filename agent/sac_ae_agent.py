@@ -52,7 +52,7 @@ class AgentSACAE(AgentSACBase):
 
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
-        self._build_decoder(decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters)
+        self.decoder = self._build_decoder(decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters)
         if decoder_type != 'identity':
             # optimizer for critic encoder for reconstruction loss
             self.encoder_optimizer = torch.optim.Adam(
@@ -77,14 +77,15 @@ class AgentSACAE(AgentSACBase):
             self.decoder.train(training)
 
     def _build_decoder(self, decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters):
-        self.decoder = None
+        decoder = None
         if decoder_type != 'identity':
             # create decoder
-            self.decoder = make_decoder(
+            decoder = make_decoder(
                 decoder_type, obs_shape, encoder_feature_dim, num_layers,
                 num_filters
             ).to(self.device)
-            self.decoder.apply(weight_init)
+            decoder.apply(weight_init)
+        return decoder
 
     def update_decoder(self, obs, target_obs, L, step):
         h = self.critic.encoder(obs)
