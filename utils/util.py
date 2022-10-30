@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn as nn
 import gym
 import os
+import sys
 from collections import deque, namedtuple
 import random
 from PIL import Image, ImageEnhance
@@ -40,6 +41,24 @@ def soft_update_params(net, target_net, tau):
             tau * param.data + (1 - tau) * target_param.data
         )
 
+'''https://github.com/yusukeurakami/dreamer-pytorch/utils.py'''
+def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.95):
+    # Setting lambda=1 gives a discounted Monte Carlo return.
+    # Setting lambda=0 gives a fixed 1-step return.
+    next_values = torch.cat([value_pred[1:], bootstrap[None]], 0)
+    discount_tensor = discount * torch.ones_like(imged_reward)  # pcont
+    inputs = imged_reward + discount_tensor * next_values * (1 - lambda_)
+    last = bootstrap
+    indices = reversed(range(len(inputs)))
+    outputs = []
+    for index in indices:
+        inp, disc = inputs[index], discount_tensor[index]
+        last = inp + disc * lambda_ * last
+        outputs.append(last)
+    outputs = list(reversed(outputs))
+    outputs = torch.stack(outputs, 0)
+    returns = outputs
+    return returns
 
 def set_seed_everywhere(seed):
     torch.manual_seed(seed)
@@ -309,6 +328,15 @@ class AgentAlphaEnv(gym.Wrapper):
         final_obs = Image.alpha_composite(main_obs, alpha_obs).convert('RGB')
         final_obs = np.array(final_obs).transpose(2, 0, 1)
         return final_obs
+
+RESERVED_NAMES = ("get", "items")
+
+
+def tuple_itemgetter(i):
+    def _tuple_itemgetter(obj):
+        return tuple.__getitem__(obj, i)
+    return _tuple_itemgetter
+
 
 def namedarraytuple(typename, field_names, return_namedtuple_cls=False,
         classname_suffix=False):

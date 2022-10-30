@@ -20,25 +20,18 @@ LOG_FREQ = 10000
 
 
 class TIA(nn.Module):
-    """
-    TIA
-    """
+    """TIA"""
     def __init__(
         self, obs_shape, z_dim,
-        encoder, encoder_target, device, output_type="continuous"
+        encoder, output_type="continuous"
     ):
         super(TIA, self).__init__()
-
         self.encoder = encoder
-
-        self.encoder_target = encoder_target
-        self.device = device
-
         self.W = nn.Parameter(torch.rand(z_dim, z_dim))
         self.output_type = output_type
 
     def encode(
-        self, x, actions, ema=False
+        self, x, actions, device='cuda'
     ):
         """
         Encoder: z_t = e(o_t, s_{t-1}, a_{t-1})
@@ -51,25 +44,18 @@ class TIA(nn.Module):
         prev_actions = actions[:-1]
         prev_act = torch.zeros(
             batch_b, self.encoder.action_shape,
-            device=self.device, dtype=prev_actions.dtype
+            device=device, dtype=prev_actions.dtype
         ).unsqueeze(0)
         prev_actions = torch.cat([prev_act, prev_actions], dim=0)
         # Embed the pixel observation
         prev_state = self.encoder.representation.initial_state(
-            batch_b, device=self.device
+            batch_b, device=device
         )
         # Rollout model by taking the same series of actions as the real model
-        if ema:
-            with torch.no_grad():
-                embeds = self.encoder_target.observation_encoder(x)
-                prior, post = self.encoder_target.rollout.\
-                    rollout_representation(batch_t, embeds,
-                                           prev_actions, prev_state)
-        else:
-            embeds = self.encoder.observation_encoder(x)
-            prior, post = self.encoder.rollout.rollout_representation(
-                batch_t, embeds, prev_actions, prev_state
-            )
+        embeds = self.encoder.observation_encoder(x)
+        prior, post = self.encoder.rollout.rollout_representation(
+            batch_t, embeds, prev_actions, prev_state
+        )
 
         return prior, post
 
@@ -113,9 +99,10 @@ class AgentTIA(AgentSACBase):
         disen_kl_scale: float = 1.0,
         disen_neg_rew_scale: float = 20000.0,
         disen_rec_scale: float = 1.5,
+        disclam: float = 0.95,
         buildin_encoder: bool = False,
     ):
-        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters)
+        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, buildin_encoder)
         self.grad_clip = grad_clip
         self.reward_opt_num = reward_opt_num
         self.reward_scale = reward_scale
@@ -124,34 +111,51 @@ class AgentTIA(AgentSACBase):
         self.disen_kl_scale = disen_kl_scale
         self.disen_neg_rew_scale = disen_neg_rew_scale
         self.disen_rec_scale = disen_rec_scale
+        self.stoch_size = stochastic_size
+        self.deter_size = deterministic_size
+        self.disclam = disclam
         feature_dim = stochastic_size + deterministic_size
 
         # distractor dynamic model
-        self.disen_model = make_rssm_encoder(
+        self.disen_encoder = make_rssm_encoder(
             encoder_type, obs_shape, action_shape, encoder_feature_dim,
             stochastic_size, deterministic_size, num_layers,
             num_filters, hidden_dim, output_logits=True
         ).to(self.device)
-        self.disen_reward = DenseDecoder((), 2, feature_dim, num_units).to(self.device)
+        self.disen_model = TIA(obs_shape, feature_dim, self.disen_encoder, output_type='continuous')
+        self.disen_reward = DenseDecoder((feature_dim), 2, feature_dim, num_units).to(self.device)
         self.disen_decoder = self._build_decoder(decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters)
 
         # task dynamic model
-        self.task_model = make_rssm_encoder(
+        self.task_encoder = make_rssm_encoder(
             encoder_type, obs_shape, action_shape, encoder_feature_dim,
             stochastic_size, deterministic_size, num_layers,
             num_filters, hidden_dim, output_logits=True
         ).to(self.device)
-        self.task_reward = DenseDecoder((), 2, feature_dim, num_units).to(self.device)
+        self.task_model = TIA(obs_shape, feature_dim, self.task_encoder, output_type='continuous')
+        self.task_reward = DenseDecoder((feature_dim), 2, feature_dim, num_units).to(self.device)
+
+        self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim, actor_log_std_min, actor_log_std_max,
+            num_layers, num_filters, buildin_encoder)
+        self.critic = DenseDecoder((feature_dim), 3, num_units).to(self.device)
+        self.actor_optimizer = torch.optim.Adam(
+            self.actor.parameters(), lr=actor_lr, betas=(actor_beta, 0.999)
+        )
+        self.critic_optimizer = torch.optim.Adam(
+            self.critic.parameters(), lr=critic_lr, betas=(critic_beta, 0.999)
+        )
 
         self.disen_optimizer = torch.optim.Adam(list(self.disen_model.parameters()) + list(self.disen_decoder.parameters()), lr=encoder_lr)
         self.disen_reward_optimizer = torch.optim.Adam(self.disen_reward.parameters(), lr=disen_reward_lr)
         self.task_optimizer = torch.optim.Adam(list(self.task_model.parameters()) + list(self.task_reward.parameters()), lr=encoder_lr)
+
+
         # joint decode
         self.joint_mask_decoder = self._build_main_decoder()
         self.joint_mask_decoder_optimizer = torch.optim.Adam(self.joint_mask_decoder.parameters(), lr=encoder_lr)
-        self.train()
-        self.critic_target.train()
 
+
+        self.train()
 
     def train(self, training=True):
         self.training = training
@@ -177,44 +181,48 @@ class AgentTIA(AgentSACBase):
             decoder.apply(weight_init)
         return decoder
 
-    def update_decoder(self, obs, target_obs, L, step):
-        h = self.critic.encoder(obs)
+    def imagine_ahead(self, post, actor, planning_horizon=12):
+        '''
+        imagine_ahead is the function to draw the imaginary tracjectory using the dynamics model, actor, critic.
+        Input: current state (posterior), current belief (hidden), policy, transition_model  # torch.Size([50, 30]) torch.Size([50, 200])
+        Output: generated trajectory of features includes beliefs, prior_states, prior_means, prior_std_devs
+                torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
+        '''
+        prev_state = flatten_states(post)
 
-        if target_obs.dim() == 4:
-            # preprocess images to be in [-0.5, 0.5] range
-            target_obs = util.preprocess_obs(target_obs)
-        rec_obs = self.decoder(h)
-        rec_loss = F.mse_loss(target_obs, rec_obs)
-
-        # add L2 penalty on latent representation
-        # see https://arxiv.org/pdf/1903.12436.pdf
-        latent_loss = (0.5 * h.pow(2).sum(1)).mean()
-
-        loss = rec_loss + self.decoder_latent_lambda * latent_loss
-        self.encoder_optimizer.zero_grad()
-        self.decoder_optimizer.zero_grad()
-        loss.backward()
-
-        self.encoder_optimizer.step()
-        self.decoder_optimizer.step()
-        L.log('train_ae/ae_loss', loss, step)
-
-        self.decoder.log(L, step, log_freq=LOG_FREQ)
+        # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
+        T = planning_horizon
+        prior_states = RSSMState(
+            torch.zeros(T, self._stoch_size),
+            torch.zeros(T, self._stoch_size),
+            torch.zeros(T, self._stoch_size),
+            torch.zeros(T, self._deter_size),
+        )
+        prior_states[0] = prev_state
+        # Loop over time sequence
+        for t in range(T - 1):
+            prev_state = prior_states[t]
+            prev_action = self.sample_action(get_feat(prev_state).detach())
+            prior_states[t + 1] = self.task_model.encoder.transition(prev_action, prev_state)
+        
+        # Return new hidden states
+        # imagined_traj = [beliefs, prior_states, prior_means, prior_std_devs]
+        imag_feat = get_feat(prior_states)
+        return imag_feat
 
     def update(self, replay_buffer, L, step):
         obs, action, reward, next_obs, not_done = replay_buffer.sample()
 
         L.log('train/batch_reward', reward.mean(), step)
 
-        # main
-        embed = self.task_model.encoder(obs)
-        post, prior = self.task_model.dynamics.observe(embed, action)
-        feat = self.task_model.dynamics.get_feat(post)
+        # main, task_model is a TIA contains rssm_encoder
+        # observation_encoder(obs) -> emb, representation(emb, prev_acs, prev_state) -> prior, post
+        prior, post = self.task_model.encode(obs, action)
+        feat = get_feat(post)
 
-        # disen
-        embed_disen = self.disen_model.encoder(obs)
-        post_disen, prior_disen = self.disen_model.dynamics.observe(embed_disen, action)
-        feat_disen = self.disen_model.dynamics.get_feat(post_disen)
+        # disen, disen_model is a TIA contains rssm_encoder
+        prior_disen, post_disen = self.disen_model.encode(obs, action)
+        feat_disen = get_feat(post_disen)
 
         # disen image pred
         image_pred_disen = self.disen_decoder(feat_disen)
@@ -243,8 +251,8 @@ class AgentTIA(AgentSACBase):
         likes['image'] = torch.mean(image_pred_joint.log_prob(obs))
         likes['reward'] = torch.mean(reward_pred.log_prob(reward)) * self.reward_scale
 
-        prior_dist = self.task_model.dynamics.get_dist(prior)
-        post_dist = self.task_model.dynamics.get_dist(post)
+        prior_dist = get_dist(prior)
+        post_dist = get_dist(post)
         div = torch.mean(torch.distributions.kl_divergence(prior_dist, post_dist))
         div = torch.max(div, self.free_nats)
 
@@ -259,8 +267,8 @@ class AgentTIA(AgentSACBase):
         reward_like_disen = torch.mean(reward_like_disen)
         reward_loss_disen = -reward_like_disen
 
-        prior_dist_disen = self.disen_model.dynamics.get_dist(prior_disen)
-        post_dist_disen = self.disen_model.dynamics.get_dist(post_disen)
+        prior_dist_disen = get_dist(prior_disen)
+        post_dist_disen = get_dist(post_disen)
         div_disen = torch.mean(torch.distributions.kl_divergence(
             post_dist_disen, prior_dist_disen))
         div_disen = torch.max(div_disen, self.free_nats)
@@ -279,30 +287,35 @@ class AgentTIA(AgentSACBase):
         self.task_optimizer.step()
         self.disen_optimizer.step()
         self.joint_mask_decoder_optimizer.step()
-        
+
         # update value and action
-        image_feat = ...
-        next_image_feat = ...
-        reward = self.task_reward(image_feat).mode()
-        self.update_critic(image_feat, action, reward, next_image_feat, not_done, L, step)
+        image_feat = self.task_model.imagine_ahead(post, self.actor)
+        rewards = self.task_reward(image_feat).mode()
+        pcont = self.discount * torch.ones_like(rewards).to(self.device)
+        values = self.critic(image_feat).mode()
+        returns = util.lambda_return(rewards[:-1], values[:-1],
+                               bootstrap=values[-1], discount=self.discount, lambda_=self.disclam)
+        self.update_critic(image_feat, returns, L, step)
 
         if step % self.actor_update_freq == 0:
-            self.update_actor_and_alpha(image_feat, L, step)
+            self.update_actor(returns, L, step)
 
-        if step % self.critic_target_update_freq == 0:
-            util.soft_update_params(
-                self.critic.Q1, self.critic_target.Q1, self.critic_tau
-            )
-            util.soft_update_params(
-                self.critic.Q2, self.critic_target.Q2, self.critic_tau
-            )
-            util.soft_update_params(
-                self.critic.encoder, self.critic_target.encoder,
-                self.encoder_tau
-            )
+    def update_critic(self, imag_feat, returns, L, step):
+        value_pred = self.critic(imag_feat)[:-1]
+        target = returns.detach()
+        critic_loss = -torch.mean(self.discount * value_pred.log_prob(target))
+        L.log('train_critic/loss', critic_loss, step)
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
+        
+    def update_actor(self, returns, L, step):
+        actor_loss = -torch.mean(self.discount * returns)
+        L.log('train_actor/loss', actor_loss, step)
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
 
-        if self.decoder is not None and step % self.decoder_update_freq == 0:
-            self.update_decoder(obs, obs, L, step)
 
     def save(self, model_dir, step):
         torch.save(

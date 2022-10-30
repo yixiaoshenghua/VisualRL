@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from encoder import OUT_DIM
-
+import torch.distributions as td
 
 class PixelDecoder(nn.Module):
     def __init__(self, obs_shape, feature_dim, num_layers=2, num_filters=32):
@@ -62,16 +62,7 @@ class PixelDecoder(nn.Module):
         L.log_param('train_decoder/fc', self.fc, step)
 
 
-_AVAILABLE_DECODERS = {'pixel': PixelDecoder}
 
-
-def make_decoder(
-    decoder_type, obs_shape, feature_dim, num_layers, num_filters
-):
-    assert decoder_type in _AVAILABLE_DECODERS
-    return _AVAILABLE_DECODERS[decoder_type](
-        obs_shape, feature_dim, num_layers, num_filters
-    )
 
 
 class MaskDecoder(nn.Module):
@@ -121,7 +112,7 @@ class MaskDecoder(nn.Module):
         self.outputs['mean'] = mean
         self.outputs['mask'] = mask
 
-        return torch.distributions.Independent(torch.distributions.Normal(mean, 1.0), len(self.obs_shape)), mask
+        return td.Independent(td.Normal(mean, 1.0), len(self.obs_shape)), mask
 
 class EnsembleMaskDecoder(nn.Module):
     """
@@ -147,7 +138,7 @@ class EnsembleMaskDecoder(nn.Module):
         mask_use1, mask_use2 = mask, 1 - mask
         mean = mean1 * mask_use1.to(self.dtype) + mean2 * mask_use2.to(self.dtype)
         self.outputs['mean'] = mean
-        return torch.distributions.Independent(torch.distributions.Normal(mean, 1.0), len(self.obs_shape)), pred1, pred2, mask_use1.to(self.dtype)
+        return td.Independent(td.Normal(mean, 1.0), len(self.obs_shape)), pred1, pred2, mask_use1.to(self.dtype)
 
 class DenseDecoder(nn.Module):
     def __init__(self, shape, num_layers, input_dim, num_units, dist='normal', act=nn.ELU):
@@ -173,8 +164,19 @@ class DenseDecoder(nn.Module):
         h = h.reshape(list(x.shape[:-1]) + list(self.shape))
         self.outputs['h'] = h
         if self.dist == 'normal':
-            return torch.distributions.Independent(torch.distributions.Normal(h, 1.0), len(self.shape))
+            return td.Independent(td.Normal(h, 1.0), len(self.shape))
         elif self.dist == 'binary':
-            return torch.distributions.Independent(torch.distributions.Bernoulli(h), len(self.shape))
+            return td.Independent(td.Bernoulli(h), len(self.shape))
         raise NotImplementedError(self.dist)
-        
+
+
+_AVAILABLE_DECODERS = {'pixel': PixelDecoder, 'mask': MaskDecoder, 'ensemble': EnsembleMaskDecoder, 'dense': DenseDecoder}
+
+
+def make_decoder(
+    decoder_type, obs_shape, feature_dim, num_layers, num_filters
+):
+    assert decoder_type in _AVAILABLE_DECODERS
+    return _AVAILABLE_DECODERS[decoder_type](
+        obs_shape, feature_dim, num_layers, num_filters
+    )

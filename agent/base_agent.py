@@ -48,8 +48,7 @@ class AgentBase:
             encoder_feature_dim, num_layers, num_filters, buildin_encoder)
         self.critic_target = self._build_critic_target(obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, buildin_encoder)
-        self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, actor_log_std_min, actor_log_std_max,
+        self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim, actor_log_std_min, actor_log_std_max,
             num_layers, num_filters, buildin_encoder)
         # build optimizer
         self.actor_optimizer = torch.optim.Adam(
