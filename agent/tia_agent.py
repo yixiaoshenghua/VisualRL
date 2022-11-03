@@ -100,6 +100,8 @@ class AgentTIA(AgentSACBase):
         disen_neg_rew_scale: float = 20000.0,
         disen_rec_scale: float = 1.5,
         disclam: float = 0.95,
+        batch_size: int = 50,
+        seq_len: int = 50,
         buildin_encoder: bool = False,
     ):
         super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, buildin_encoder)
@@ -114,6 +116,8 @@ class AgentTIA(AgentSACBase):
         self.stoch_size = stochastic_size
         self.deter_size = deterministic_size
         self.disclam = disclam
+        self.batch_size = batch_size
+        self.seq_len = seq_len
         feature_dim = stochastic_size + deterministic_size
 
         # distractor dynamic model
@@ -160,9 +164,6 @@ class AgentTIA(AgentSACBase):
     def train(self, training=True):
         self.training = training
         self.actor.train(training)
-        self.critic.train(training)
-        if self.decoder is not None:
-            self.decoder.train(training)
 
     def _build_main_decoder(self, obs_shape, feature_dim, num_layers, num_filters, dtype):
         main_mask_decoder = MaskDecoder(obs_shape, feature_dim, num_layers, num_filters).to(self.device)
@@ -181,7 +182,7 @@ class AgentTIA(AgentSACBase):
             decoder.apply(weight_init)
         return decoder
 
-    def imagine_ahead(self, post, actor, planning_horizon=12):
+    def imagine_ahead(self, post, planning_horizon=15):
         '''
         imagine_ahead is the function to draw the imaginary tracjectory using the dynamics model, actor, critic.
         Input: current state (posterior), current belief (hidden), policy, transition_model  # torch.Size([50, 30]) torch.Size([50, 200])
@@ -211,8 +212,8 @@ class AgentTIA(AgentSACBase):
         return imag_feat
 
     def update(self, replay_buffer, L, step):
-        obs, action, reward, next_obs, not_done = replay_buffer.sample()
-
+        # obs (L, n, *img_size), action (L, n, acs_dim), reward (L, n), not_done (L, n)
+        obs, action, reward, not_done = replay_buffer.sample_sequence(self.batch_size, self.seq_len)
         L.log('train/batch_reward', reward.mean(), step)
 
         # main, task_model is a TIA contains rssm_encoder

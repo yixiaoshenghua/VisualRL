@@ -219,7 +219,7 @@ class RSSMRollout(RollOutModule):
         """
         Roll out the model with actions and observations from data.
         :param steps: number of steps to roll out
-        :param obs_embed: size(time_steps, batch_size, action_size)
+        :param obs_embed: size(time_steps, batch_size, embed_size)
         :param action: size(time_steps, batch_size, action_size)
         :param prev_state: RSSM state, size(batch_size, state_size)
         :return: prior, posterior states.

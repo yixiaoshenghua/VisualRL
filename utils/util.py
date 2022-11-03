@@ -7,6 +7,7 @@ import sys
 from collections import deque, namedtuple
 import random
 from PIL import Image, ImageEnhance
+from torch.utils.data import Dataset
 
 class eval_mode(object):
     def __init__(self, *models):
@@ -95,13 +96,82 @@ def preprocess_obs(obs, bits=5):
     return obs
 
 
-class ReplayBuffer(object):
+def random_crop(imgs, out=84):
+    """
+        args:
+        imgs: np.array shape (B,C,H,W)
+        out: output size (e.g. 84)
+        returns np.array
+    """
+    n, c, h, w = imgs.shape
+    crop_max = h - out + 1
+    w1 = np.random.randint(0, crop_max, n)
+    h1 = np.random.randint(0, crop_max, n)
+    cropped = np.empty((n, c, out, out), dtype=imgs.dtype)
+    for i, (img, w11, h11) in enumerate(zip(imgs, w1, h1)):
+
+        cropped[i] = img[:, h11:h11 + out, w11:w11 + out]
+    return cropped
+
+
+def grayscale(imgs):
+    # imgs: b x c x h x w
+    device = imgs.device
+    b, c, h, w = imgs.shape
+    frames = c // 3
+
+    imgs = imgs.view([b, frames, 3, h, w])
+    imgs = imgs[:, :, 0, ...] * 0.2989 + imgs[:, :, 1, ...] * 0.587 + \
+        imgs[:, :, 2, ...] * 0.114
+
+    imgs = imgs.type(torch.uint8).float()
+    # assert len(imgs.shape) == 3, imgs.shape
+    imgs = imgs[:, :, None, :, :]
+    imgs = imgs * torch.ones(
+        [1, 1, 3, 1, 1], dtype=imgs.dtype
+    ).float().to(device)  # broadcast tiling
+    return imgs
+
+
+def random_grayscale(images, p=.3):
+    """
+        args:
+        imgs: torch.tensor shape (B,C,H,W)
+        device: cpu or cuda
+        returns torch.tensor
+    """
+    device = images.device
+    in_type = images.type()
+    images = images * 255.
+    images = images.type(torch.uint8)
+    # images: [B, C, H, W]
+    bs, channels, h, w = images.shape
+    images = images.to(device)
+    gray_images = grayscale(images)
+    rnd = np.random.uniform(0., 1., size=(images.shape[0],))
+    mask = rnd <= p
+    mask = torch.from_numpy(mask)
+    frames = images.shape[1] // 3
+    images = images.view(*gray_images.shape)
+    mask = mask[:, None] * torch.ones([1, frames]).type(mask.dtype)
+    mask = mask.type(images.dtype).to(device)
+    mask = mask[:, :, None, None, None]
+    out = mask * gray_images + (1 - mask) * images
+    out = out.view([bs, -1, h, w]).type(in_type) / 255.
+    return out
+
+
+class ReplayBuffer(Dataset):
     """Buffer to store environment transitions."""
-    def __init__(self, obs_shape, action_shape, capacity, batch_size, device):
+    def __init__(
+        self, obs_shape, action_shape, capacity, batch_size, device,
+        path_len=None, image_size=84, transform=None
+    ):
         self.capacity = capacity
         self.batch_size = batch_size
         self.device = device
-
+        self.image_size = image_size
+        self.transform = transform
         # the proprioceptive obs is stored as float32, pixels obs as uint8
         obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
 
@@ -114,8 +184,10 @@ class ReplayBuffer(object):
         self.idx = 0
         self.last_save = 0
         self.full = False
+        self._path_len = path_len
 
     def add(self, obs, action, reward, next_obs, done):
+
         np.copyto(self.obses[self.idx], obs)
         np.copyto(self.actions[self.idx], action)
         np.copyto(self.rewards[self.idx], reward)
@@ -124,6 +196,108 @@ class ReplayBuffer(object):
 
         self.idx = (self.idx + 1) % self.capacity
         self.full = self.full or self.idx == 0
+
+    def sample_proprio(self):
+
+        idxs = np.random.randint(
+            0, self.capacity if self.full else self.idx, size=self.batch_size
+        )
+
+        obses = self.obses[idxs]
+        next_obses = self.next_obses[idxs]
+
+        obses = torch.as_tensor(obses, device=self.device).float()
+        actions = torch.as_tensor(self.actions[idxs], device=self.device)
+        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
+        next_obses = torch.as_tensor(
+            next_obses, device=self.device
+        ).float()
+        not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
+        return obses, actions, rewards, next_obses, not_dones
+
+    def sample_cpc(self):
+        # start = time.time()
+        idxs = np.random.randint(
+            0, self.capacity if self.full else self.idx, size=self.batch_size
+        )
+
+        obses = self.obses[idxs]
+        next_obses = self.next_obses[idxs]
+        pos = obses.copy()
+
+        obses = random_crop(obses, self.image_size)
+        next_obses = random_crop(next_obses, self.image_size)
+        pos = random_crop(pos, self.image_size)
+
+        obses = torch.as_tensor(obses, device=self.device).float()
+        next_obses = torch.as_tensor(
+            next_obses, device=self.device
+        ).float()
+        actions = torch.as_tensor(self.actions[idxs], device=self.device)
+        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
+        not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
+
+        pos = torch.as_tensor(pos, device=self.device).float()
+        cpc_kwargs = dict(obs_anchor=obses, obs_pos=pos,
+                          time_anchor=None, time_pos=None)
+
+        return obses, actions, rewards, next_obses, not_dones, cpc_kwargs
+
+    def _sample_sequential_idx(self, n, L):
+        # Returns an index for a valid single chunk uniformly sampled from the
+        # memory
+        idx = np.random.randint(
+            0, self.capacity - L if self.full else self.idx - L, size=n
+        )
+        pos_in_path = idx - idx // self._path_len * self._path_len
+        idx[pos_in_path > self._path_len - L] = idx[
+            pos_in_path > self._path_len - L
+        ] // self._path_len * self._path_len + L
+        idxs = np.zeros((n, L), dtype=np.int)
+        for i in range(n):
+            idxs[i] = np.arange(idx[i], idx[i] + L)
+        return idxs.transpose().reshape(-1)
+
+    def sample_multi_view(self, n, L):
+        # start = time.time()
+        idxs = self._sample_sequential_idx(n, L)
+        obses = self.obses[idxs]
+        pos = obses.copy()
+
+        obses = random_crop(obses, out=self.image_size)
+        pos = random_crop(pos, out=self.image_size)
+
+        obses = torch.as_tensor(obses, device=self.device).float()\
+            .reshape(L, n, *obses.shape[-3:])
+        actions = torch.as_tensor(self.actions[idxs], device=self.device)\
+            .reshape(L, n, -1)
+        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)\
+            .reshape(L, n)
+        not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)\
+            .reshape(L, n)
+
+        pos = torch.as_tensor(pos, device=self.device).float()\
+            .reshape(L, n, *obses.shape[-3:])
+        mib_kwargs = dict(view1=obses, view2=pos,
+                          time_anchor=None, time_pos=None)
+
+        return obses, actions, rewards, not_dones, mib_kwargs
+
+    def sample_sequence(self, n, L):
+        # start = time.time()
+        idxs = self._sample_sequential_idx(n, L)
+        obses = self.obses[idxs]
+
+        obses = torch.as_tensor(obses, device=self.device).float()\
+            .reshape(L, n, *obses.shape[-3:])
+        actions = torch.as_tensor(self.actions[idxs], device=self.device)\
+            .reshape(L, n, -1)
+        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)\
+            .reshape(L, n)
+        not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)\
+            .reshape(L, n)
+
+        return obses, actions, rewards, not_dones
 
     def sample(self, k=False):
         idxs = np.random.randint(
@@ -171,6 +345,25 @@ class ReplayBuffer(object):
             self.not_dones[start:end] = payload[4]
             self.idx = end
 
+    def __getitem__(self, idx):
+        idx = np.random.randint(
+            0, self.capacity if self.full else self.idx, size=1
+        )
+        idx = idx[0]
+        obs = self.obses[idx]
+        action = self.actions[idx]
+        reward = self.rewards[idx]
+        next_obs = self.next_obses[idx]
+        not_done = self.not_dones[idx]
+
+        if self.transform:
+            obs = self.transform(obs)
+            next_obs = self.transform(next_obs)
+
+        return obs, action, reward, next_obs, not_done
+
+    def __len__(self):
+        return self.capacity
 
 class FrameStack(gym.Wrapper):
     def __init__(self, env, k):
