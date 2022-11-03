@@ -1,4 +1,4 @@
-<img src="imgs/logo2.png" align="right" width="40%"/>
+<img src="imgs/logo4.png" align="right" width="40%"/>
 
 # VisualRL
 ![CI](https://github.com/DLR-RM/stable-baselines3/workflows/CI/badge.svg)
