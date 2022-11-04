@@ -25,7 +25,6 @@ def random_translate(imgs, size, return_random_idxs=False, h1s=None, w1s=None):
         return outs, dict(h1s=h1s, w1s=w1s)
     return outs
 
-
 def center_window(imgs, window_size, in_place=False):
     n, c, h, w = imgs.shape
     zeros_h = h - window_size
@@ -77,7 +76,6 @@ def random_crop(imgs, out):
         
         cropped[i] = img[:, h11:h11 + out, w11:w11 + out]
     return cropped
-
 
 def grayscale(imgs):
     # imgs: b x c x h x w
@@ -244,8 +242,6 @@ def random_rotation(images,p=.3):
 
 # random color
 
-    
-
 def random_convolution(imgs):
     '''
     random covolution in "network randomization"
@@ -295,64 +291,23 @@ def random_color_jitter(imgs):
 def no_aug(x):
     return x
 
+def center_crop_image(image, output_size):
+    h, w = image.shape[1:]
+    new_h, new_w = output_size, output_size
 
-if __name__ == '__main__':
-    import time 
-    from tabulate import tabulate
-    def now():
-        return time.time()
-    def secs(t):
-        s = now() - t
-        tot = round((1e5 * s)/60,1)
-        return round(s,3),tot
+    top = (h - new_h)//2
+    left = (w - new_w)//2
 
-    x = np.load('data_sample.npy',allow_pickle=True)
-    x = np.concatenate([x,x,x],1)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    image = image[:, top:top + new_h, left:left + new_w]
+    return image
 
-    x = torch.from_numpy(x).to(device)
-    x = x.float() / 255.
+def center_crop_images(image, output_size):
+    h, w = image.shape[2:]
+    new_h, new_w = output_size, output_size
 
-    # crop
-    t = now()
-    random_crop(x.cpu().numpy(),64)
-    s1,tot1 = secs(t)
-    # grayscale 
-    t = now()
-    random_grayscale(x,p=.5)
-    s2,tot2 = secs(t)
-    # normal cutout 
-    t = now()
-    random_cutout(x.cpu().numpy(),10,30)
-    s3,tot3 = secs(t)
-    # color cutout 
-    t = now()
-    random_cutout_color(x.cpu().numpy(),10,30)
-    s4,tot4 = secs(t)
-    # flip 
-    t = now()
-    random_flip(x,p=.5)
-    s5,tot5 = secs(t)
-    # rotate 
-    t = now()
-    random_rotation(x,p=.5)
-    s6,tot6 = secs(t)
-    # rand conv 
-    t = now()
-    random_convolution(x)
-    s7,tot7 = secs(t)
-    # rand color jitter 
-    t = now()
-    random_color_jitter(x)
-    s8,tot8 = secs(t)
-    
-    print(tabulate([['Crop', s1,tot1], 
-                    ['Grayscale', s2,tot2], 
-                    ['Normal Cutout', s3,tot3], 
-                    ['Color Cutout', s4,tot4], 
-                    ['Flip', s5,tot5], 
-                    ['Rotate', s6,tot6], 
-                    ['Rand Conv', s7,tot7], 
-                    ['Color Jitter', s8,tot8]], 
-                    headers=['Data Aug', 'Time / batch (secs)', 'Time / 100k steps (mins)']))
+    top = (h - new_h)//2
+    left = (w - new_w)//2
+
+    image = image[:, :, top:top + new_h, left:left + new_w]
+    return image
 
