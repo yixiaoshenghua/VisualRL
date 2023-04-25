@@ -31,11 +31,11 @@ class Critic(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(
         self, obs_shape, action_shape, hidden_dim, encoder_type,
-        encoder_feature_dim, num_layers, num_filters, buildin_encoder=True
+        encoder_feature_dim, num_layers, num_filters, builtin_encoder=True
     ):
         super().__init__()
-        self.buildin_encoder = buildin_encoder
-        if self.buildin_encoder:
+        self.builtin_encoder = builtin_encoder
+        if self.builtin_encoder:
             self.encoder = make_encoder(
                 encoder_type, obs_shape, encoder_feature_dim, num_layers,
                 num_filters
@@ -53,7 +53,7 @@ class Critic(nn.Module):
 
     def forward(self, obs, action, detach_encoder=False):
         # detach_encoder allows to stop gradient propogation to encoder
-        if self.buildin_encoder:
+        if self.builtin_encoder:
             obs = self.encoder(obs, detach=detach_encoder)
 
         q1 = self.Q1(obs, action)

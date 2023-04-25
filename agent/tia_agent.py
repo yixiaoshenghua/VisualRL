@@ -102,9 +102,9 @@ class AgentTIA(AgentSACBase):
         disclam: float = 0.95,
         batch_size: int = 50,
         seq_len: int = 50,
-        buildin_encoder: bool = False,
+        builtin_encoder: bool = False,
     ):
-        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, buildin_encoder)
+        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
         self.grad_clip = grad_clip
         self.reward_opt_num = reward_opt_num
         self.reward_scale = reward_scale
@@ -127,7 +127,7 @@ class AgentTIA(AgentSACBase):
             num_filters, hidden_dim, output_logits=True
         ).to(self.device)
         self.disen_model = TIA(obs_shape, feature_dim, self.disen_encoder, output_type='continuous')
-        self.disen_reward = DenseDecoder((feature_dim), 2, feature_dim, num_units).to(self.device)
+        self.disen_reward = DenseDecoder((), 2, feature_dim, num_units).to(self.device)
         self.disen_decoder = self._build_decoder(decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters)
 
         # task dynamic model
@@ -137,10 +137,10 @@ class AgentTIA(AgentSACBase):
             num_filters, hidden_dim, output_logits=True
         ).to(self.device)
         self.task_model = TIA(obs_shape, feature_dim, self.task_encoder, output_type='continuous')
-        self.task_reward = DenseDecoder((feature_dim), 2, feature_dim, num_units).to(self.device)
+        self.task_reward = DenseDecoder((), 2, feature_dim, num_units).to(self.device)
 
         self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, buildin_encoder)
+            num_layers, num_filters, builtin_encoder)
         self.critic = DenseDecoder((feature_dim), 3, num_units).to(self.device)
         self.actor_optimizer = torch.optim.Adam(
             self.actor.parameters(), lr=actor_lr, betas=(actor_beta, 0.999)
@@ -155,7 +155,7 @@ class AgentTIA(AgentSACBase):
 
 
         # joint decode
-        self.joint_mask_decoder = self._build_main_decoder()
+        self.joint_mask_decoder = self._build_main_decoder(obs_shape, feature_dim, num_layers, num_filters)
         self.joint_mask_decoder_optimizer = torch.optim.Adam(self.joint_mask_decoder.parameters(), lr=encoder_lr)
 
 
@@ -165,7 +165,7 @@ class AgentTIA(AgentSACBase):
         self.training = training
         self.actor.train(training)
 
-    def _build_main_decoder(self, obs_shape, feature_dim, num_layers, num_filters, dtype):
+    def _build_main_decoder(self, obs_shape, feature_dim, num_layers, num_filters, dtype=torch.float32):
         main_mask_decoder = MaskDecoder(obs_shape, feature_dim, num_layers, num_filters).to(self.device)
         dis_mask_decoder = MaskDecoder(obs_shape, feature_dim, num_layers, num_filters).to(self.device)
         joint_mask_decoder = EnsembleMaskDecoder(main_mask_decoder, dis_mask_decoder, dtype).to(self.device)

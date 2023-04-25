@@ -13,11 +13,11 @@ class Actor(nn.Module):
     """CNN actor network"""
     def __init__(
         self, obs_shape, action_shape, hidden_dim, encoder_type,
-        encoder_feature_dim, log_std_min, log_std_max, num_layers, num_filters, buildin_encoder=True
+        encoder_feature_dim, log_std_min, log_std_max, num_layers, num_filters, builtin_encoder=True
     ):
         super().__init__()
-        self.buildin_encoder = buildin_encoder
-        if self.buildin_encoder:
+        self.builtin_encoder = builtin_encoder
+        if self.builtin_encoder:
             self.encoder = make_encoder(
                 encoder_type, obs_shape, encoder_feature_dim, num_layers,
                 num_filters
@@ -38,7 +38,7 @@ class Actor(nn.Module):
     def forward(
         self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False
     ):
-        if self.buildin_encoder:
+        if self.builtin_encoder:
             obs = self.encoder(obs, detach=detach_encoder)
 
         mu, log_std = self.trunk(obs).chunk(2, dim=-1)

@@ -151,3 +151,25 @@ def tensor(*args, torch_device=None, **kwargs):
 
 def normal(*args, **kwargs):
     return torch.normal(*args, **kwargs).to(device)
+
+class ContDist:
+
+    def __init__(self, dist=None):
+        super().__init__()
+        self._dist = dist
+        self.mean = dist.mean
+
+    def __getattr__(self, name):
+        return getattr(self._dist, name)
+
+    def entropy(self):
+        return self._dist.entropy()
+
+    def mode(self):
+        return self._dist.mean
+
+    def sample(self, sample_shape=()):
+        return self._dist.rsample(sample_shape)
+
+    def log_prob(self, x):
+        return self._dist.log_prob(x)

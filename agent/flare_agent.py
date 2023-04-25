@@ -2,67 +2,64 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
 import copy
 import math
-
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed
+from typing import Any, Dict, Optional, Type, Union, List
 
 import utils.util as util
-from model.encoder import make_encoder
-import utils.data_augs as rad 
-from sac import Actor, Critic, weight_init
+from model.decoder import make_decoder
+from model.actor import Actor
+from model.critic import Critic
+from agent.base_agent import AgentSACBase
+from utils.pytorch_util import weight_init
+import utils.data_augs as rad
 
 LOG_FREQ = 10000
 
 
-class RadSacAgentDDP(object):
+class AgentFLARE(AgentSACBase):
     """RAD with SAC, multi-GPU."""
     def __init__(
         self,
-        obs_shape,
-        action_shape,
-        device,
-        hidden_dim=256,
-        discount=0.99,
-        init_temperature=0.01,
-        alpha_lr=1e-3,
-        alpha_beta=0.9,
-        actor_lr=1e-3,
-        actor_beta=0.9,
-        actor_log_std_min=-10,
-        actor_log_std_max=2,
-        actor_update_freq=2,
-        critic_lr=1e-3,
-        critic_beta=0.9,
-        critic_tau=0.005,
-        critic_target_update_freq=2,
-        encoder_type='pixel',
-        encoder_feature_dim=50,
-        encoder_lr=1e-3,
-        encoder_tau=0.005,
-        num_layers=4,
-        num_filters=32,
-        log_interval=100,
-        detach_encoder=False,
-        latent_dim=128,
-        data_augs='',
-        rank=0,
-        print_param_check=False,
-        action_range=[-1,1],
-        image_channel=3,
+        obs_shape: int,
+        action_shape: int,
+        device: Union[torch.device, str],
+        hidden_dim: int = 256,
+        discount: float = 0.99,
+        init_temperature: float = 0.01,
+        alpha_lr: float = 1e-3,
+        alpha_beta: float = 0.9,
+        actor_lr: float = 1e-3,
+        actor_beta: float = 0.9,
+        actor_log_std_min: float = -10,
+        actor_log_std_max: float = 2,
+        actor_update_freq: int = 2,
+        critic_lr: float = 1e-3,
+        critic_beta: float = 0.9,
+        critic_tau: float = 0.005,
+        critic_target_update_freq: int = 2,
+        encoder_type: str = 'pixel',
+        encoder_feature_dim: int = 50,
+        encoder_tau: float = 0.005,
+        encoder_lr: float = 1e-3,
+        num_layers: int = 4,
+        num_filters: int = 32,
+        log_interval: int = 100,
+        detach_encoder: bool = False,
+        latent_dim: int = 128,
+        data_augs: str = '',
+        rank: int = 0,
+        print_param_check: bool = False,
+        action_range: List = [-1, 1],
+        image_channel: int = 3,
+        builtin_encoder: bool = True,
     ):
-        self.device = device
-        self.discount = discount
-        self.critic_tau = critic_tau
-        self.encoder_tau = encoder_tau
-        self.actor_update_freq = actor_update_freq
-        self.critic_target_update_freq = critic_target_update_freq
+        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
         self.log_interval = log_interval
         self.image_size = obs_shape[-1]
         self.latent_dim = latent_dim
         self.detach_encoder = detach_encoder
-        self.encoder_type = encoder_type
         self.data_augs = data_augs
         self.action_range = action_range
         self.image_channel = image_channel
@@ -92,74 +89,16 @@ class RadSacAgentDDP(object):
             assert aug_name in aug_to_func, 'invalid data aug string'
             self.augs_funcs[aug_name] = aug_to_func[aug_name]
 
-        self.actor = Actor(
-            obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, image_channel
-        ).to(device)
-
-        self.critic = Critic(
-            obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, image_channel
-        ).to(device)
-
-        self.critic_target = Critic(
-            obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, image_channel
-        ).to(device)
-
-
-        self.critic_target.load_state_dict(self.critic.state_dict())
-
-        # tie encoders between actor and critic, and CURL and critic
-        self.actor.encoder.copy_conv_weights_from(self.critic.encoder)
-
-        self.log_alpha = torch.tensor(np.log(init_temperature)).to(device)
-        self.log_alpha.requires_grad = True
-        # set target entropy to -|A|
-        self.target_entropy = -np.prod(action_shape)
-
         # Wrap models with DDP for training, before making optimizer.
         self.actor = DDP(self.actor, device_ids=device_ids, find_unused_parameters=True)  # Only this process's GPU.
         self.critic = DDP(self.critic, device_ids=device_ids, find_unused_parameters=True)
         # will do alpha manually.
-        
-        # optimizers
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=actor_lr, betas=(actor_beta, 0.999)
-        )
-
-        self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=critic_lr, betas=(critic_beta, 0.999)
-        )
-
-        self.log_alpha_optimizer = torch.optim.Adam(
-            [self.log_alpha], lr=alpha_lr, betas=(alpha_beta, 0.999)
-        )
 
         self.cross_entropy_loss = nn.CrossEntropyLoss()
 
         self.train()
         self.critic_target.train()
 
-    def train(self, training=True):
-        self.training = training
-        self.actor.train(training)
-        self.critic.train(training)
-
-    @property
-    def alpha(self):
-        return self.log_alpha.exp()
-
-    def select_action(self, obs):
-        with torch.no_grad():
-            obs = torch.FloatTensor(obs).to(self.device)
-            obs = obs.unsqueeze(0)
-            mu, _, _, _ = self.actor(
-                obs, compute_pi=False, compute_log_pi=False
-            )
-            action = mu.cpu().data
-            return action.numpy().flatten()
 
     def sample_action(self, obs):
         if obs.shape[-1] != self.image_size:
@@ -182,8 +121,7 @@ class RadSacAgentDDP(object):
         # get current Q estimates
         current_Q1, current_Q2 = self.critic(
             obs, action, detach_encoder=self.detach_encoder)
-        critic_loss = 0
-        critic_loss = critic_loss + F.mse_loss(current_Q1,
+        critic_loss = F.mse_loss(current_Q1,
                                  target_Q) + F.mse_loss(current_Q2, target_Q)
         if step % self.log_interval == 0 and self.rank == 0:
             L.log('train_critic/loss', critic_loss, step)
@@ -276,20 +214,4 @@ class RadSacAgentDDP(object):
                 self.critic.module.encoder, self.critic_target.encoder,
                 self.encoder_tau
             )
-
-    def save(self, model_dir, step):
-        torch.save(
-            self.actor.state_dict(), '%s/actor_%s.pt' % (model_dir, step)
-        )
-        torch.save(
-            self.critic.state_dict(), '%s/critic_%s.pt' % (model_dir, step)
-        )
-
-    def load(self, model_dir, step):
-        self.actor.load_state_dict(
-            torch.load('%s/actor_%s.pt' % (model_dir, step))
-        )
-        self.critic.load_state_dict(
-            torch.load('%s/critic_%s.pt' % (model_dir, step))
-        )
  

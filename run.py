@@ -15,14 +15,18 @@ import utils.util as util
 from logger import Logger
 from video import VideoRecorder
 
-from agent.sac_ae import SacAeAgent
-from agent.sac_ddp import RadSacAgentDDP
-from agent.curl import RadSacAgent
+from agent.sacae_agent import AgentSACAE
+from agent.flare_agent import AgentFLARE
+from agent.curl_agent import AgentCURL
+from agent.rad_agent import AgentRad
 from agent.baseline import BaselineAgent
 from agent.deepmdp import DeepMDPAgent
-from agent.bisim import BisimAgent
-from agent.drq import DRQAgent
-from agent.dribo import DRIBOSacAgent
+from agent.dbc_agent import AgentDBC
+from agent.plannet_agent import AgentPLANNET
+from agent.dreamer_agent import AgentDREAMER
+from agent.tia_agent import AgentTIA
+from agent.drq_agent import AgentDRQ
+from agent.dribo_agent import AgentDRIBO
 
 import numpy as np
 
@@ -206,7 +210,7 @@ def make_log(args):
 def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
     args.agent = args.agent.lower()
     if args.agent == 'sac_ae':
-        return SacAeAgent(
+        return AgentSACAE(
             obs_shape=obs_shape,
             action_shape=action_shape,
             device=device,
@@ -234,10 +238,11 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             decoder_latent_lambda=args.decoder_latent_lambda,
             decoder_weight_lambda=args.decoder_weight_lambda,
             num_layers=args.num_layers,
-            num_filters=args.num_filters
+            num_filters=args.num_filters,
+            builtin_encoder=args.builtin_encoder,
         )
-    elif args.agent == 'rad_sac':
-        return RadSacAgent(
+    elif args.agent == 'rad':
+        return AgentRAD(
             obs_shape=obs_shape,
             action_shape=action_shape,
             device=device,
@@ -264,10 +269,11 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             log_interval=args.log_interval,
             detach_encoder=args.detach_encoder,
             latent_dim=args.latent_dim,
-            data_augs=args.data_augs
+            data_augs=args.data_augs,
+            builtin_encoder=args.builtin_encoder,
         )
-    elif args.agent == 'rad_sac_ddp': # flare
-        return RadSacAgentDDP(
+    elif args.agent == 'flare': # flare
+        return AgentFLARE(
             obs_shape=obs_shape,
             action_shape=action_shape,
             device=device,
@@ -299,6 +305,7 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             print_param_check=args.print_param_check,
             action_range=action_range,
             image_channel=image_channel,
+            builtin_encoder=args.builtin_encoder,
         )
     elif args.agent == 'baseline':
         agent = BaselineAgent(
@@ -330,10 +337,11 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             decoder_weight_lambda=args.decoder_weight_lambda,
             transition_model_type=args.transition_model_type,
             num_layers=args.num_layers,
-            num_filters=args.num_filters
+            num_filters=args.num_filters,
+            builtin_encoder=args.builtin_encoder,
         )
-    elif args.agent == 'bisim':
-        agent = BisimAgent(
+    elif args.agent == 'dbc':
+        agent = AgentDBC(
             obs_shape=obs_shape,
             action_shape=action_shape,
             device=device,
@@ -363,7 +371,8 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             transition_model_type=args.transition_model_type,
             num_layers=args.num_layers,
             num_filters=args.num_filters,
-            bisim_coef=args.bisim_coef
+            bisim_coef=args.bisim_coef,
+            builtin_encoder=args.builtin_encoder,
         )
     elif args.agent == 'deepmdp':
         agent = DeepMDPAgent(
@@ -395,10 +404,11 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             decoder_weight_lambda=args.decoder_weight_lambda,
             transition_model_type=args.transition_model_type,
             num_layers=args.num_layers,
-            num_filters=args.num_filters
+            num_filters=args.num_filters,
+            builtin_encoder=args.builtin_encoder,
         )
     elif args.agent == 'drq':
-        agent = DRQAgent(
+        agent = AgentDRQ(
             obs_shape=obs_shape, 
             action_shape=action_shape, 
             action_range=action_range,
@@ -406,17 +416,19 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             feature_dim=args.feature_dim,
             hidden_dim=args.hidden_dim,
             hidden_depth=args.hidden_depth,
-            log_std_bounds=[args.actor_log_std_min, args.actor_log_std_max],
+            actor_log_std_min=args.actor_log_std_min,
+            actor_log_std_max=args.actor_log_std_max,
             discount=args.discount,
             init_temperature=args.init_temperature,
             lr=args.lr,
             actor_update_frequency=args.actor_update_freq,
             critic_tau=args.critic_tau,
             critic_target_update_frequency=args.critic_target_update_freq,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            builtin_encoder=args.builtin_encoder,
         )
     elif args.agent == 'dribo':
-        agent = DRIBOSacAgent(
+        agent = AgentDRIBO(
             obs_shape=obs_shape,
             action_shape=action_shape,
             device=device,
@@ -450,11 +462,55 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             beta_end_value=args.beta_end_value,
             grad_clip=args.grad_clip,
             kl_balancing=args.kl_balance,
+            builtin_encoder=args.builtin_encoder,
         )
+    elif args.agent == 'planet':
+        agent = AgentPLANET()
     elif args.agent == 'dreamer':
-        agent = DreamerAgent()
+        agent = AgentDREAMER()
     elif args.agent == 'tia':
-        agent = AgentTIA()
+        agent = AgentTIA(
+            obs_shape=obs_shape,
+            action_shape=action_shape,
+            device=device,
+            hidden_dim=args.hidden_dim,
+            discount=args.discount,
+            init_temperature=args.init_temperature,
+            alpha_lr=args.alpha_lr,
+            alpha_beta=args.alpha_beta,
+            actor_lr=args.actor_lr,
+            actor_beta=args.actor_beta,
+            actor_log_std_min=args.actor_log_std_min,
+            actor_log_std_max=args.actor_log_std_max,
+            actor_update_freq=args.actor_update_freq,
+            critic_lr=args.critic_lr,
+            critic_beta=args.critic_beta,
+            critic_tau=args.critic_tau,
+            critic_target_update_freq=args.critic_target_update_freq,
+            encoder_type=args.encoder_type,
+            decoder_type=args.decoder_type,
+            encoder_feature_dim=args.feature_dim, # 50
+            stochastic_size=args.stochastic_dim,
+            deterministic_size=args.deterministic_dim,
+            encoder_lr=args.encoder_lr,
+            encoder_tau=args.encoder_tau,
+            num_layers=args.num_layers,
+            num_filters=args.num_filters,
+            num_units=args.num_units,
+            grad_clip=args.grad_clip,
+            disen_reward_lr=args.disen_reward_lr,
+            reward_scale=args.reward_scale,
+            reward_opt_num=args.reward_opt_num,
+            free_nuts=args.free_nuts,
+            kl_scale=args.kl_scale,
+            disen_kl_scale=args.disen_kl_scale,
+            disen_neg_rew_scale=args.disen_neg_rew_scale,
+            disen_rec_scale=args.disen_rec_scale,
+            disclam=args.disclam,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            builtin_encoder=args.builtin_encoder,
+        )
     else:
         assert 'agent is not supported: %s' % args.agent
 

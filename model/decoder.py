@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from encoder import OUT_DIM
 import torch.distributions as td
+from utils import pytorch_util
 
 class PixelDecoder(nn.Module):
     def __init__(self, obs_shape, feature_dim, num_layers=2, num_filters=32):
@@ -61,7 +62,55 @@ class PixelDecoder(nn.Module):
             )
         L.log_param('train_decoder/fc', self.fc, step)
 
+class ConvDecoder(nn.Module):
 
+    def __init__(
+            self, inp_depth,
+            depth=32, act=nn.ReLU, shape=(3, 64, 64), kernels=(5, 5, 6, 6),
+            thin=True):
+        super(ConvDecoder, self).__init__()
+        self._inp_depth = inp_depth
+        self._act = act
+        self._depth = depth
+        self._shape = shape
+        self._kernels = kernels
+        self._thin = thin
+
+        if self._thin:
+            self._linear_layer = nn.Linear(inp_depth, 32 * self._depth)
+        else:
+            self._linear_layer = nn.Linear(inp_depth, 128 * self._depth)
+        inp_dim = 32 * self._depth
+
+        cnnt_layers = []
+        for i, kernel in enumerate(self._kernels):
+            depth = 2 ** (len(self._kernels) - i - 2) * self._depth
+            act = self._act
+            if i == len(self._kernels) - 1:
+                #depth = self._shape[-1]
+                depth = self._shape[0]
+                act = None
+            if i != 0:
+                inp_dim = 2 ** (len(self._kernels) - (i-1) - 2) * self._depth
+            cnnt_layers.append(nn.ConvTranspose2d(inp_dim, depth, kernel, 2))
+            if act is not None:
+                cnnt_layers.append(act())
+        self._cnnt_layers = nn.Sequential(*cnnt_layers)
+
+    def forward(self, features, dtype=None):
+        if self._thin:
+            x = self._linear_layer(features)
+            x = x.reshape([-1, 1, 1, 32 * self._depth])
+            x = x.permute(0,3,1,2)
+        else:
+            x = self._linear_layer(features)
+            x = x.reshape([-1, 2, 2, 32 * self._depth])
+            x = x.permute(0,3,1,2)
+        x = self._cnnt_layers(x)
+        mean = x.reshape(features.shape[:-1] + self._shape)
+        mean = mean.permute(0, 1, 3, 4, 2)
+        return pytorch_util.ContDist(td.independent.Independent(
+            td.normal.Normal(mean, 1), len(self._shape)))
 
 
 
@@ -145,6 +194,7 @@ class DenseDecoder(nn.Module):
         super(DenseDecoder, self).__init__()
         self.shape = shape
         self.num_layers = num_layers
+        self.input_dim = input_dim
         self.num_units = num_units
         self.dist = dist
         self.act = act()
@@ -161,7 +211,7 @@ class DenseDecoder(nn.Module):
         for i in range(self.num_layers):
             h = self.act(self.net[i](h))
         h = self.net[-1](h)
-        h = h.reshape(list(x.shape[:-1]) + list(self.shape))
+        h = h.reshape(list(x.shape[:-1]) + list(self.input_dim))
         self.outputs['h'] = h
         if self.dist == 'normal':
             return td.Independent(td.Normal(h, 1.0), len(self.shape))

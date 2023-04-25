@@ -35,7 +35,7 @@ class AgentBase:
         encoder_tau: float = 0.005,
         num_layers: int = 4,
         num_filters: int = 32,
-        buildin_encoder: bool = True,
+        builtin_encoder: bool = True,
         ):
         self.device = device
         self.discount = discount
@@ -45,11 +45,11 @@ class AgentBase:
         self.critic_target_update_freq = critic_target_update_freq
 
         self.critic = self._build_critic(obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, buildin_encoder)
+            encoder_feature_dim, num_layers, num_filters, builtin_encoder)
         self.critic_target = self._build_critic_target(obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, buildin_encoder)
+            encoder_feature_dim, num_layers, num_filters, builtin_encoder)
         self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, buildin_encoder)
+            num_layers, num_filters, builtin_encoder)
         # build optimizer
         self.actor_optimizer = torch.optim.Adam(
             self.actor.parameters(), lr=actor_lr, betas=(actor_beta, 0.999)
@@ -60,11 +60,11 @@ class AgentBase:
 
     def _build_actor(self, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, buildin_encoder=True):
+            num_layers, num_filters, builtin_encoder=True):
         actor = Actor(
             obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, buildin_encoder
+            num_layers, num_filters, builtin_encoder
         ).to(self.device)
         
         # tie encoders between actor and critic
@@ -72,19 +72,19 @@ class AgentBase:
         return actor
 
     def _build_critic(self, obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim,    
-            num_layers, num_filters, buildin_encoder=True):
+            num_layers, num_filters, builtin_encoder=True):
         critic = Critic(
             obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, buildin_encoder
+            encoder_feature_dim, num_layers, num_filters, builtin_encoder
         ).to(self.device)
         return critic
 
 
     def _build_critic_target(self, obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, buildin_encoder=True):
+            encoder_feature_dim, num_layers, num_filters, builtin_encoder=True):
         critic_target = Critic(
             obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, buildin_encoder
+            encoder_feature_dim, num_layers, num_filters, builtin_encoder
         ).to(self.device)
         critic_target.load_state_dict(self.critic.state_dict())
         return critic_target
@@ -217,9 +217,9 @@ class AgentSACBase(AgentBase):
         encoder_tau: float = 0.005,
         num_layers: int = 4,
         num_filters: int = 32,
-        buildin_encoder: bool = True,
+        builtin_encoder: bool = True,
     ):
-        super(AgentBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, buildin_encoder)
+        super(AgentBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
 
         self.log_alpha = self._build_log_alpha(init_temperature, action_shape, alpha_lr, alpha_beta)
         self.log_alpha_optimizer = torch.optim.Adam(
