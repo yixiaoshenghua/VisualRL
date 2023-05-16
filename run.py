@@ -25,7 +25,7 @@ from agent.dbc_agent import AgentDBC
 from agent.plannet_agent import AgentPLANNET
 from agent.dreamer_agent import AgentDREAMER
 from agent.tia_agent import AgentTIA
-from agent.drq_agent import AgentDRQ
+from agent.drq_agent import AgentDrQ
 from agent.dribo_agent import AgentDRIBO
 
 import numpy as np
@@ -242,7 +242,7 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             builtin_encoder=args.builtin_encoder,
         )
     elif args.agent == 'rad':
-        return AgentRAD(
+        return AgentRad(
             obs_shape=obs_shape,
             action_shape=action_shape,
             device=device,
@@ -408,7 +408,7 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             builtin_encoder=args.builtin_encoder,
         )
     elif args.agent == 'drq':
-        agent = AgentDRQ(
+        agent = AgentDrQ(
             obs_shape=obs_shape, 
             action_shape=action_shape, 
             action_range=action_range,

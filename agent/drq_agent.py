@@ -15,12 +15,13 @@ from agent.base_agent import AgentSACBase
 from utils.pytorch_util import weight_init
 import utils.data_augs as rad
 
-class DRQAgent(AgentSACBase):
+class AgentDrQ(AgentSACBase):
     """Data regularized Q: actor-critic method for learning from pixels."""
     def __init__(
         self,
         obs_shape: int,
         action_shape: int,
+        action_range: float,
         device: Union[torch.device, str],
         hidden_dim: int = 256,
         discount: float = 0.99,
@@ -42,24 +43,38 @@ class DRQAgent(AgentSACBase):
         num_layers: int = 4,
         num_filters: int = 32,
         detach_encoder: bool = False,
-        action_range: List = [-1, 1],
         batch_size: int = 64,
         builtin_encoder: bool = True,
         ):
         super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
+        self.action_range = action_range
         self.batch_size = batch_size
         self.train()
         self.critic_target.train()
 
-    def act(self, obs, sample=False):
-        obs = torch.FloatTensor(obs).to(self.device)
-        obs = obs.unsqueeze(0)
-        dist = self.actor(obs)
-        action = dist.sample() if sample else dist.mean
-        action = action.clamp(*self.action_range)
-        assert action.ndim == 2 and action.shape[0] == 1
-        return utils.to_np(action[0])
-
+    def select_action(self, obs):
+        with torch.no_grad():
+            obs = torch.FloatTensor(obs).to(self.device)
+            obs = obs.unsqueeze(0)
+            mu, _, _, _ = self.actor(
+                obs, compute_pi=False, compute_log_pi=False
+            )
+            mu = mu.clamp(*self.action_range)
+            return mu.cpu().data.numpy().flatten()
+    
+    def sample_action(self, obs):
+        if obs.shape[-1] != self.image_size:
+            obs = util.center_crop_image(obs, self.image_size)
+ 
+        with torch.no_grad():
+            obs = torch.FloatTensor(obs).to(self.device)
+            obs = obs.unsqueeze(0)
+            mu, pi, _, _ = self.actor(
+                obs, compute_log_pi=False
+            )
+            pi = pi.clamp(*self.action_range)
+            return pi.cpu().data.numpy().flatten()
+        
     def update_critic(self, obs, obs_aug, action, reward, next_obs,
                       next_obs_aug, not_done, L, step):
         with torch.no_grad():

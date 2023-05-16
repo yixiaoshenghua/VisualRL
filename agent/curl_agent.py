@@ -70,6 +70,7 @@ class AgentCURL(AgentSACBase):
     def __init__(self, 
         obs_shape: int,
         action_shape: int,
+        action_range: float,
         device: Union[torch.device, str],
         hidden_dim: int = 256,
         discount: float = 0.99,
@@ -98,6 +99,7 @@ class AgentCURL(AgentSACBase):
         num_filters: int = 32
     ):
         super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters)
+        self.action_range = action_range
         self.cpc_update_freq = cpc_update_freq
         self.log_interval = log_interval
         self.image_size = obs_shape[-1]
@@ -149,6 +151,16 @@ class AgentCURL(AgentSACBase):
         self.critic.train(training)
         if self.encoder_type == 'pixel':
             self.CURL.train(training)
+    
+    def select_action(self, obs):
+        with torch.no_grad():
+            obs = torch.FloatTensor(obs).to(self.device)
+            obs = obs.unsqueeze(0)
+            mu, _, _, _ = self.actor(
+                obs, compute_pi=False, compute_log_pi=False
+            )
+            mu = mu.clamp(*self.action_range)
+            return mu.cpu().data.numpy().flatten()
 
     def sample_action(self, obs):
         if obs.shape[-1] != self.image_size:
@@ -158,6 +170,7 @@ class AgentCURL(AgentSACBase):
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
             mu, pi, _, _ = self.actor(obs, compute_log_pi=False)
+            pi = pi.clamp(*self.action_range)
             return pi.cpu().data.numpy().flatten()
 
     def update_critic(self, obs, action, reward, next_obs, not_done, L, step):
