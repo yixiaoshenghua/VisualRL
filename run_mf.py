@@ -15,18 +15,19 @@ import utils.util as util
 from logger import Logger
 from video import VideoRecorder
 
-from agent.sacae_agent import AgentSACAE
-from agent.flare_agent import AgentFLARE
-from agent.curl_agent import AgentCURL
-from agent.rad_agent import AgentRad
-from agent.baseline import BaselineAgent
-from agent.deepmdp import DeepMDPAgent
-from agent.dbc_agent import AgentDBC
-from agent.plannet_agent import AgentPLANNET
-from agent.dreamer_agent import AgentDREAMER
-from agent.tia_agent import AgentTIA
-from agent.drq_agent import AgentDrQ
-from agent.dribo_agent import AgentDRIBO
+from agent.model_free.sacae_agent import AgentSACAE
+from agent.model_free.flare_agent import AgentFLARE
+from agent.model_free.curl_agent import AgentCURL
+from agent.model_free.rad_agent import AgentRad
+from agent.model_free.baseline import BaselineAgent
+from agent.model_free.deepmdp import DeepMDPAgent
+from agent.model_free.dbc_agent import AgentDBC
+from agent.model_free.drq_agent import AgentDrQ
+from agent.model_free.dribo_agent import AgentDRIBO
+
+# from agent.plannet_agent import AgentPLANNET
+# from agent.dreamer_agent import AgentDREAMER
+# from agent.tia_agent import AgentTIA
 
 import numpy as np
 
@@ -464,53 +465,53 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             kl_balancing=args.kl_balance,
             builtin_encoder=args.builtin_encoder,
         )
-    elif args.agent == 'planet':
-        agent = AgentPLANET()
-    elif args.agent == 'dreamer':
-        agent = AgentDREAMER()
-    elif args.agent == 'tia':
-        agent = AgentTIA(
-            obs_shape=obs_shape,
-            action_shape=action_shape,
-            device=device,
-            hidden_dim=args.hidden_dim,
-            discount=args.discount,
-            init_temperature=args.init_temperature,
-            alpha_lr=args.alpha_lr,
-            alpha_beta=args.alpha_beta,
-            actor_lr=args.actor_lr,
-            actor_beta=args.actor_beta,
-            actor_log_std_min=args.actor_log_std_min,
-            actor_log_std_max=args.actor_log_std_max,
-            actor_update_freq=args.actor_update_freq,
-            critic_lr=args.critic_lr,
-            critic_beta=args.critic_beta,
-            critic_tau=args.critic_tau,
-            critic_target_update_freq=args.critic_target_update_freq,
-            encoder_type=args.encoder_type,
-            decoder_type=args.decoder_type,
-            encoder_feature_dim=args.feature_dim, # 50
-            stochastic_size=args.stochastic_dim,
-            deterministic_size=args.deterministic_dim,
-            encoder_lr=args.encoder_lr,
-            encoder_tau=args.encoder_tau,
-            num_layers=args.num_layers,
-            num_filters=args.num_filters,
-            num_units=args.num_units,
-            grad_clip=args.grad_clip,
-            disen_reward_lr=args.disen_reward_lr,
-            reward_scale=args.reward_scale,
-            reward_opt_num=args.reward_opt_num,
-            free_nuts=args.free_nuts,
-            kl_scale=args.kl_scale,
-            disen_kl_scale=args.disen_kl_scale,
-            disen_neg_rew_scale=args.disen_neg_rew_scale,
-            disen_rec_scale=args.disen_rec_scale,
-            disclam=args.disclam,
-            batch_size=args.batch_size,
-            seq_len=args.seq_len,
-            builtin_encoder=args.builtin_encoder,
-        )
+    # elif args.agent == 'planet':
+    #     agent = AgentPLANET()
+    # elif args.agent == 'dreamer':
+    #     agent = AgentDREAMER()
+    # elif args.agent == 'tia':
+    #     agent = AgentTIA(
+    #         obs_shape=obs_shape,
+    #         action_shape=action_shape,
+    #         device=device,
+    #         hidden_dim=args.hidden_dim,
+    #         discount=args.discount,
+    #         init_temperature=args.init_temperature,
+    #         alpha_lr=args.alpha_lr,
+    #         alpha_beta=args.alpha_beta,
+    #         actor_lr=args.actor_lr,
+    #         actor_beta=args.actor_beta,
+    #         actor_log_std_min=args.actor_log_std_min,
+    #         actor_log_std_max=args.actor_log_std_max,
+    #         actor_update_freq=args.actor_update_freq,
+    #         critic_lr=args.critic_lr,
+    #         critic_beta=args.critic_beta,
+    #         critic_tau=args.critic_tau,
+    #         critic_target_update_freq=args.critic_target_update_freq,
+    #         encoder_type=args.encoder_type,
+    #         decoder_type=args.decoder_type,
+    #         encoder_feature_dim=args.feature_dim, # 50
+    #         stochastic_size=args.stochastic_dim,
+    #         deterministic_size=args.deterministic_dim,
+    #         encoder_lr=args.encoder_lr,
+    #         encoder_tau=args.encoder_tau,
+    #         num_layers=args.num_layers,
+    #         num_filters=args.num_filters,
+    #         num_units=args.num_units,
+    #         grad_clip=args.grad_clip,
+    #         disen_reward_lr=args.disen_reward_lr,
+    #         reward_scale=args.reward_scale,
+    #         reward_opt_num=args.reward_opt_num,
+    #         free_nuts=args.free_nuts,
+    #         kl_scale=args.kl_scale,
+    #         disen_kl_scale=args.disen_kl_scale,
+    #         disen_neg_rew_scale=args.disen_neg_rew_scale,
+    #         disen_rec_scale=args.disen_rec_scale,
+    #         disclam=args.disclam,
+    #         batch_size=args.batch_size,
+    #         seq_len=args.seq_len,
+    #         builtin_encoder=args.builtin_encoder,
+    #     )
     else:
         assert 'agent is not supported: %s' % args.agent
 

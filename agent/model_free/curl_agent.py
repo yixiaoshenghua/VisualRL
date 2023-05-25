@@ -11,7 +11,7 @@ from model.decoder import make_decoder
 from model.actor import Actor
 from model.critic import Critic
 from model.transition_model import make_transition_model
-from agent.base_agent import AgentSACBase
+from agent.model_free.base_agent import AgentSACBase
 from utils.pytorch_util import weight_init
 import utils.data_augs as rad 
 

@@ -13,7 +13,7 @@ from model.decoder import make_decoder, MaskDecoder, EnsembleMaskDecoder, DenseD
 from model.recurrent_state_space_model import *
 from model.actor import Actor
 from model.critic import Critic
-from agent.base_agent import AgentSACBase
+from agent.model_free.base_agent import AgentSACBase
 from utils.pytorch_util import weight_init
 
 LOG_FREQ = 10000

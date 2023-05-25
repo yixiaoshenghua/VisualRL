@@ -14,7 +14,7 @@ from model.decoder import make_decoder
 from model.recurrent_state_space_model import get_feat, get_dist, flatten_states, RSSMState
 from model.actor import Actor
 from model.critic import Critic
-from agent.base_agent import AgentSACBase
+from agent.model_free.base_agent import AgentSACBase
 from utils.pytorch_util import weight_init
 
 

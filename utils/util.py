@@ -1,11 +1,94 @@
 import torch
 import numpy as np
-import torch.nn as nn
-import gym
 import os
 import sys
 from collections import deque, namedtuple
 import random
+import re
+from typing import Iterable
+from torch.nn import Module
+
+def preprocess_obs(obs):
+    obs = obs.to(torch.float32)/255.0 - 0.5
+    return obs
+
+def get_parameters(modules: Iterable[Module]):
+    """
+    Given a list of torch modules, returns a list of their parameters.
+    :param modules: iterable of modules
+    :returns: a list of parameters
+    """
+    model_parameters = []
+    for module in modules:
+        model_parameters += list(module.parameters())
+    return model_parameters
+
+class FreezeParameters:
+    def __init__(self, modules: Iterable[Module]):
+        """
+        Context manager to locally freeze gradients.
+        In some cases with can speed up computation because gradients aren't calculated for these listed modules.
+        example:
+        ```
+        with FreezeParameters([module]):
+          output_tensor = module(input_tensor)
+        ```
+        :param modules: iterable of modules. used to call .parameters() to freeze gradients.
+        """
+        self.modules = modules
+        self.param_states = [p.requires_grad for p in get_parameters(self.modules)]
+
+    def __enter__(self):
+
+        for param in get_parameters(self.modules):
+            param.requires_grad = False
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        for i, param in enumerate(get_parameters(self.modules)):
+            param.requires_grad = self.param_states[i]
+
+
+def compute_return(rewards, values, discounts, td_lam, last_value):
+
+    next_values = torch.cat([values[1:], last_value.unsqueeze(0)],0)  
+    targets = rewards + discounts * next_values * (1-td_lam)
+    rets =[]
+    last_rew = last_value
+
+    for t in range(rewards.shape[0]-1, -1, -1):
+        last_rew = targets[t] + discounts[t] * td_lam *(last_rew)
+        rets.append(last_rew)
+
+    returns = torch.flip(torch.stack(rets), [0])
+    return returns
+
+def schedule(string, step):
+    try:
+        return float(string)
+    except ValueError:
+        # step = tf.cast(step, tf.float32) #Fixme cast
+        match = re.match(r'linear\((.+),(.+),(.+)\)', string)
+        if match:
+            initial, final, duration = [float(group) for group in match.groups()]
+            mix = torch.clamp(step / duration, 0, 1)
+            return (1 - mix) * initial + mix * final
+        match = re.match(r'warmup\((.+),(.+)\)', string)
+        if match:
+            warmup, value = [float(group) for group in match.groups()]
+            scale = torch.clamp(step / warmup, 0, 1)
+            return scale * value
+        match = re.match(r'exp\((.+),(.+),(.+)\)', string)
+        if match:
+            initial, final, halflife = [float(group) for group in match.groups()]
+            return (initial - final) * 0.5 ** (step / halflife) + final
+        match = re.match(r'horizon\((.+),(.+),(.+)\)', string)
+        if match:
+            initial, final, duration = [float(group) for group in match.groups()]
+            mix = torch.clamp(step / duration, 0, 1)
+            horizon = (1 - mix) * initial + mix * final
+            return 1 - 1 / horizon
+        raise NotImplementedError(string)
+
 
 class eval_mode(object):
     def __init__(self, *models):
