@@ -14,11 +14,12 @@ import copy
 import utils.util as util
 from logger import Logger
 from video import VideoRecorder
+from utils.replay_buffer import ReplayBuffer
 
 from agent.model_free.sacae_agent import AgentSACAE
 from agent.model_free.flare_agent import AgentFLARE
 from agent.model_free.curl_agent import AgentCURL
-from agent.model_free.rad_agent import AgentRad
+# from agent.model_free.rad_agent import AgentRad
 from agent.model_free.baseline import BaselineAgent
 from agent.model_free.deepmdp import DeepMDPAgent
 from agent.model_free.dbc_agent import AgentDBC
@@ -32,6 +33,9 @@ from agent.model_free.dribo_agent import AgentDRIBO
 import numpy as np
 
 from eval import make_eval
+
+os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
+# os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -81,6 +85,7 @@ def parse_args():
     parser.add_argument('--encoder_feature_dim', default=50, type=int)
     parser.add_argument('--encoder_lr', default=1e-3, type=float)
     parser.add_argument('--encoder_tau', default=0.05, type=float)
+    parser.add_argument('--detach_encoder', default=False, action='store_true')
     parser.add_argument('--decoder_type', default='pixel', type=str)
     parser.add_argument('--decoder_lr', default=1e-3, type=float)
     parser.add_argument('--decoder_update_freq', default=1, type=int)
@@ -90,6 +95,7 @@ def parse_args():
     parser.add_argument('--num_filters', default=32, type=int)
     parser.add_argument('--stochastic_dim', default=30, type=int)
     parser.add_argument('--deterministic_dim', default=200, type=int)
+    parser.add_argument('--latent_dim', default=128, type=int)
     parser.add_argument('--multi_view_skl', default=False, action='store_true')
     parser.add_argument('--kl_balance', default=False, action='store_true')
     # sac
@@ -103,6 +109,7 @@ def parse_args():
     # misc
     parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--work_dir', default='.', type=str)
+    parser.add_argument('--log_interval', default=100, type=int)
     parser.add_argument('--save_tb', default=False, action='store_true')
     parser.add_argument('--save_model', default=False, action='store_true')
     parser.add_argument('--save_buffer', default=False, action='store_true')
@@ -141,9 +148,9 @@ def make_env(args):
         env = dmc2gym.make(
             domain_name=args.domain_name,
             task_name=args.task_name,
-            resource_files=resource_files,
-            img_source=img_source,
-            total_frames=total_frames,
+            # resource_files=resource_files,
+            # img_source=img_source,
+            # total_frames=total_frames,
             seed=args.seed,
             visualize_reward=False,
             from_pixels=True,
@@ -159,9 +166,9 @@ def make_env(args):
                 dmc2gym.make(
                     domain_name=args.domain_name,
                     task_name=args.task_name,
-                    resource_files=resource_files,
-                    img_source=img_source,
-                    total_frames=total_frames,
+                    # resource_files=resource_files,
+                    # img_source=img_source,
+                    # total_frames=total_frames,
                     seed=args.seed,
                     visualize_reward=False,
                     from_pixels=True,
@@ -178,9 +185,9 @@ def make_env(args):
         dis_env = dmc2gym.make(
             domain_name=dis_envs[args.domain_name][0],
             task_name=dis_envs[args.domain_name][1],
-            resource_files=resource_files,
-            img_source=img_source,
-            total_frames=total_frames,
+            # resource_files=resource_files,
+            # img_source=img_source,
+            # total_frames=total_frames,
             seed=args.seed,
             visualize_reward=False,
             from_pixels=True,
@@ -421,12 +428,44 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             actor_log_std_max=args.actor_log_std_max,
             discount=args.discount,
             init_temperature=args.init_temperature,
-            lr=args.lr,
+            alpha_lr=args.alpha_lr,
             actor_update_frequency=args.actor_update_freq,
             critic_tau=args.critic_tau,
             critic_target_update_frequency=args.critic_target_update_freq,
             batch_size=args.batch_size,
             builtin_encoder=args.builtin_encoder,
+        )
+    elif args.agent == 'curl':
+        agent = AgentCURL(
+            obs_shape=obs_shape,
+            action_shape=action_shape,
+            action_range=action_range,
+            device=device,
+            hidden_dim=args.hidden_dim,
+            discount=args.discount,
+            init_temperature=args.init_temperature,
+            alpha_lr=args.alpha_lr,
+            alpha_beta=args.alpha_beta,
+            actor_lr=args.actor_lr,
+            actor_beta=args.actor_beta,
+            actor_log_std_min=args.actor_log_std_min,
+            actor_log_std_max=args.actor_log_std_max,
+            actor_update_freq=args.actor_update_freq,
+            critic_lr=args.critic_lr,
+            critic_beta=args.critic_beta,
+            critic_tau=args.critic_tau,
+            critic_target_update_freq=args.critic_target_update_freq,
+            encoder_type=args.encoder_type,
+            encoder_feature_dim=args.encoder_feature_dim,
+            encoder_tau=args.encoder_tau,
+            encoder_lr=args.encoder_lr,
+            cpc_update_freq=1,
+            log_interval=args.log_interval,
+            detach_encoder=args.detach_encoder,
+            latent_dim=args.latent_dim,
+            data_augs=args.data_augs,
+            num_layers=args.num_layers,
+            num_filters=args.num_filters
         )
     elif args.agent == 'dribo':
         agent = AgentDRIBO(
@@ -529,9 +568,9 @@ def main():
     env = dmc2gym.make(
         domain_name=args.domain_name,
         task_name=args.task_name,
-        resource_files=args.resource_files,
-        img_source=args.img_source,
-        total_frames=args.total_frames,
+        # resource_files=args.resource_files,
+        # img_source=args.img_source,
+        # total_frames=args.total_frames,
         seed=args.seed,
         visualize_reward=False,
         from_pixels=(args.encoder_type == 'pixel'),
@@ -545,9 +584,9 @@ def main():
     eval_env = dmc2gym.make(
         domain_name=args.domain_name,
         task_name=args.task_name,
-        resource_files=args.resource_files,
-        img_source=args.img_source,
-        total_frames=args.total_frames,
+        # resource_files=args.resource_files,
+        # img_source=args.img_source,
+        # total_frames=args.total_frames,
         seed=args.seed,
         visualize_reward=False,
         from_pixels=(args.encoder_type == 'pixel'),
@@ -585,7 +624,7 @@ def main():
     assert env.action_space.low.min() >= -1
     assert env.action_space.high.max() <= 1
 
-    replay_buffer = util.ReplayBuffer(
+    replay_buffer = ReplayBuffer(
         obs_shape=env.observation_space.shape,
         action_shape=env.action_space.shape,
         capacity=args.replay_buffer_capacity,
@@ -597,7 +636,8 @@ def main():
         obs_shape=env.observation_space.shape,
         action_shape=env.action_space.shape,
         args=args,
-        device=device
+        device=device, 
+        action_range=action_range
     )
 
     L = Logger(args.work_dir, use_tb=args.save_tb)

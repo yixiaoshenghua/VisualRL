@@ -219,7 +219,9 @@ class AgentSACBase(AgentBase):
         num_filters: int = 32,
         builtin_encoder: bool = True,
     ):
-        super(AgentBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
+        super().__init__(obs_shape, action_shape, device, hidden_dim, discount, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, 
+                                        actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, 
+                                        num_layers, num_filters, builtin_encoder)
 
         self.log_alpha = self._build_log_alpha(init_temperature, action_shape, alpha_lr, alpha_beta)
         self.log_alpha_optimizer = torch.optim.Adam(

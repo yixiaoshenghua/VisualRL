@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import utils.util as util
 from sac import  Actor, Critic, weight_init, LOG_FREQ
 from model.transition_model import make_transition_model
-from mdoel.decoder import make_decoder
+from model.decoder import make_decoder
 
 
 class BaselineAgent(object):

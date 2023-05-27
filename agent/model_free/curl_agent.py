@@ -67,7 +67,8 @@ class CURL(nn.Module):
 
 
 class AgentCURL(AgentSACBase):
-    def __init__(self, 
+    def __init__(
+        self, 
         obs_shape: int,
         action_shape: int,
         action_range: float,
@@ -98,7 +99,9 @@ class AgentCURL(AgentSACBase):
         num_layers: int = 4,
         num_filters: int = 32
     ):
-        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters)
+        super().__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, 
+                                           actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+                                           encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters)
         self.action_range = action_range
         self.cpc_update_freq = cpc_update_freq
         self.log_interval = log_interval
@@ -224,7 +227,7 @@ class AgentCURL(AgentSACBase):
 
     def update(self, replay_buffer, L, step):
         if self.encoder_type == 'pixel':
-            obs, action, reward, next_obs, not_done = replay_buffer.sample_rad(self.augs_funcs)
+            obs, action, reward, next_obs, not_done, cpc_kwargs = replay_buffer.sample_rad(self.augs_funcs)
         else:
             obs, action, reward, next_obs, not_done = replay_buffer.sample_proprio()
     
@@ -247,6 +250,9 @@ class AgentCURL(AgentSACBase):
                 self.critic.encoder, self.critic_target.encoder,
                 self.encoder_tau
             )
+        if step % self.cpc_update_freq == 0 and self.encoder_type == 'pixel':
+            obs_anchor, obs_pos = cpc_kwargs["obs_anchor"], cpc_kwargs["obs_pos"]
+            self.update_cpc(obs_anchor, obs_pos,cpc_kwargs, L, step)
 
     def save_curl(self, model_dir, step):
         torch.save(

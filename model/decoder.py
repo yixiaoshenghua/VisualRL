@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from encoder import OUT_DIM
+from .encoder import OUT_DIM
 import torch.distributions as td
 from utils import pytorch_util
 
