@@ -12,7 +12,7 @@ from dmc2gym.dmc2gym.wrappers import *
 from agent.model_based.dreamer_agent import AgentDreamer
 from utils import *
 
-os.environ['MUJOCO_GL'] = 'egl'
+os.environ['MUJOCO_GL'] = 'glfw' # glfw, egl, osmesa
 
 def make_env(args):
 
@@ -26,7 +26,7 @@ def make_env(args):
 def get_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--env', type=str, default='walker_walk', help='Control Suite environment')
+    parser.add_argument('--env', type=str, default='walker-walk', help='Control Suite environment')
     parser.add_argument('--algo', type=str, default='Dreamerv1', choices=['Dreamerv1', 'Dreamerv2'], help='choosing algorithm')
     parser.add_argument('--exp-name', type=str, default='lr1e-3', help='name of experiment for logging')
     parser.add_argument('--train', action='store_true', help='trains the model')

@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.distributions as distributions
 
-
 from utils.replay_buffer import MBReplayBuffer
 from model.models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
 from utils import *
@@ -20,7 +19,7 @@ class AgentDreamer:
         self.obs_shape = obs_shape
         self.action_size = action_size
         self.device = device
-        self.restore = args.restore
+        self.restore = restore
         self.restore_path = args.checkpoint_path
         self.data_buffer = MBReplayBuffer(self.args.buffer_size, self.obs_shape, self.action_size,
                                                     self.args.train_seq_len, self.args.batch_size)
