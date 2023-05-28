@@ -4,6 +4,7 @@ import numpy as np
 from model.recurrent_state_space_model import RSSMState, RSSMRepresentation, RSSMTransition, \
     RSSMRollout, ObservationEncoder, CarlaObservationEncoder
 import utils.pytorch_util as ptu
+from utils.util import get_conv_shape
 
 def tie_weights(src, trg):
     assert type(src) == type(trg)
@@ -16,7 +17,7 @@ OUT_DIM = {2: 39, 4: 35, 6: 31}
 
 class PixelEncoder(nn.Module):
     """Convolutional encoder of pixels observations."""
-    def __init__(self, obs_shape, feature_dim, num_layers=2, num_filters=32):
+    def __init__(self, obs_shape, feature_dim, device, num_layers=2, num_filters=32):
         super().__init__()
 
         assert len(obs_shape) == 3
@@ -31,7 +32,10 @@ class PixelEncoder(nn.Module):
             self.convs.append(nn.Conv2d(num_filters, num_filters, 3, stride=1))
 
         out_dim = OUT_DIM[num_layers]
-        self.fc = nn.Linear(num_filters * out_dim * out_dim, self.feature_dim)
+        dim_after_cnn = get_conv_shape(self.convs, obs_shape, device)
+
+        # self.fc = nn.Linear(num_filters * out_dim * out_dim, self.feature_dim)
+        self.fc = nn.Linear(dim_after_cnn, self.feature_dim)
         self.ln = nn.LayerNorm(self.feature_dim)
 
         self.outputs = dict()
@@ -391,11 +395,11 @@ _AVAILABLE_ENCODERS = {'pixel': PixelEncoder, 'identity': IdentityEncoder, 'rssm
 
 
 def make_encoder(
-    encoder_type, obs_shape, feature_dim, num_layers, num_filters, output_logits=False
+    encoder_type, obs_shape, feature_dim, num_layers, num_filters, device, output_logits=False
 ):
     assert encoder_type in _AVAILABLE_ENCODERS
     return _AVAILABLE_ENCODERS[encoder_type](
-        obs_shape, feature_dim, num_layers, num_filters
+        obs_shape, feature_dim, device, num_layers, num_filters
     )
 
 def make_rssm_encoder(
