@@ -227,7 +227,7 @@ class AgentCURL(AgentSACBase):
 
     def update(self, replay_buffer, L, step):
         if self.encoder_type == 'pixel':
-            obs, action, reward, next_obs, not_done, cpc_kwargs = replay_buffer.sample_rad(self.augs_funcs)
+            obs, action, reward, next_obs, not_done, cpc_kwargs = replay_buffer.sample_cpc()#self.augs_funcs)
         else:
             obs, action, reward, next_obs, not_done = replay_buffer.sample_proprio()
     
