@@ -31,14 +31,14 @@ class Critic(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(
         self, obs_shape, action_shape, hidden_dim, encoder_type,
-        encoder_feature_dim, num_layers, num_filters, builtin_encoder=True
+        encoder_feature_dim, num_layers, num_filters, device, builtin_encoder=True
     ):
         super().__init__()
         self.builtin_encoder = builtin_encoder
         if self.builtin_encoder:
             self.encoder = make_encoder(
                 encoder_type, obs_shape, encoder_feature_dim, num_layers,
-                num_filters
+                num_filters, device
             )
 
         self.Q1 = QFunction(
