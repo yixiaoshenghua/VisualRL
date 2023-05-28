@@ -457,6 +457,7 @@ class ReplayBufferFLARE(Dataset):
     def __len__(self):
         return self.capacity 
 
+#TODO: When to use this replay buffer?
 # class ReplayBuffer(object):
 #     """Buffer to store environment transitions."""
 #     def __init__(self, obs_shape, action_shape, capacity, image_pad, device):
