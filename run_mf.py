@@ -14,7 +14,7 @@ import copy
 import utils.util as util
 from logger import Logger
 from video import VideoRecorder
-from utils.replay_buffer import ReplayBuffer
+from utils.replay_buffer import ReplayBuffer, ReplayBufferFLARE
 
 from agent.model_free.sacae_agent import AgentSACAE
 from agent.model_free.flare_agent import AgentFLARE
@@ -34,8 +34,9 @@ import numpy as np
 
 from eval import make_eval
 
-os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
 # os.environ['PYOPENGL_PLATFORM'] = 'egl'
+os.environ['MUJOCO_GL']='osmesa'
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -568,6 +569,7 @@ def main():
     env = dmc2gym.make(
         domain_name=args.domain_name,
         task_name=args.task_name,
+        #TODO: When to use these parameters?
         # resource_files=args.resource_files,
         # img_source=args.img_source,
         # total_frames=args.total_frames,
@@ -584,6 +586,7 @@ def main():
     eval_env = dmc2gym.make(
         domain_name=args.domain_name,
         task_name=args.task_name,
+        #TODO: When to use these parameters?
         # resource_files=args.resource_files,
         # img_source=args.img_source,
         # total_frames=args.total_frames,
@@ -624,8 +627,16 @@ def main():
     assert env.action_space.low.min() >= -1
     assert env.action_space.high.max() <= 1
 
+    #TODO: Added a reshape process
+    if args.encoder_type == 'pixel':
+        obs_shape = (3*args.frame_stack, args.image_size, args.image_size)
+        pre_aug_obs_shape = (3*args.frame_stack,args.pre_transform_image_size,args.pre_transform_image_size)
+    else:
+        obs_shape = env.observation_space.shape
+        pre_aug_obs_shape = obs_shape
+
     replay_buffer = ReplayBuffer(
-        obs_shape=env.observation_space.shape,
+        obs_shape=pre_aug_obs_shape,
         action_shape=env.action_space.shape,
         capacity=args.replay_buffer_capacity,
         batch_size=args.batch_size,
@@ -633,7 +644,7 @@ def main():
     )
 
     agent = make_agent(
-        obs_shape=env.observation_space.shape,
+        obs_shape=obs_shape,
         action_shape=env.action_space.shape,
         args=args,
         device=device, 
@@ -695,8 +706,11 @@ def main():
         )
         episode_reward += reward
 
+        #TODO: Some replay buffer needs parameters like this: (obs, action, reward, next_obs, *done,* done_bool)
         replay_buffer.add(obs, action, reward, next_obs, done_bool)
-        np.copyto(replay_buffer.k_obses[replay_buffer.idx - args.k], next_obs)
+        
+        # CURL doesn't need this
+        # np.copyto(replay_buffer.k_obses[replay_buffer.idx - args.k], next_obs)
 
         obs = next_obs
         episode_step += 1
