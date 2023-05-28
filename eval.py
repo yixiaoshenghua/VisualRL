@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 def make_eval(type):
-    if 'rad' in type:
+    if 'rad' in type or 'curl' in type:
         type = 'rad'
     else:
         type = 'bisim'
@@ -49,11 +49,14 @@ def evaluate_rad(env, agent, video, num_episodes, L, step, args):
         start_time = time.time()
         prefix = 'stochastic_' if sample_stochastically else ''
         for i in range(num_episodes):
-            save_name = args.image_dir + '/step_' + str(step) + '_eps_' + str(i) + '.pt'
+            #TODO: The following variables are not used!
+            # save_name = args.image_dir + '/step_' + str(step) + '_eps_' + str(i) + '.pt'
             state_obs = []
             pixel_obs = []
             if 'pixel' in args.encoder_type:
-                obs, qpos = env.reset()
+                #TODO: When to add qpos?
+                # obs, qpos = env.reset()
+                obs = env.reset()
             else:
                 obs =  env.reset()    
 
@@ -76,12 +79,16 @@ def evaluate_rad(env, agent, video, num_episodes, L, step, args):
                 with util.eval_mode(agent):
                     if sample_stochastically:
                         if 'pixel' in args.encoder_type:
-                            action = agent.sample_action(obs / 255.)
+                            #TODO: When to normalize the obs?
+                            # action = agent.sample_action(obs / 255.)
+                            action = agent.sample_action(obs)
                         else:
                             action = agent.sample_action(obs)
                     else:
                         if 'pixel' in args.encoder_type:
-                            action = agent.select_action(obs / 255.)
+                            #TODO: When to normalize the obs?
+                            # action = agent.select_action(obs / 255.)
+                            action = agent.sample_action(obs)
                         else:
                             action = agent.select_action(obs)
                 obs, reward, done, _ = env.step(action)
