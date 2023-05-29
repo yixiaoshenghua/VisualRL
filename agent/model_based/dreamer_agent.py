@@ -29,7 +29,7 @@ class AgentDreamer:
     def _build_model(self, restore):
 
         self.rssm = RSSM(
-                    action_size =self.action_size,
+                    action_size = self.action_size,
                     stoch_size = self.args.stoch_size,
                     deter_size = self.args.deter_size,
                     hidden_size = self.args.hidden_size,
@@ -45,7 +45,7 @@ class AgentDreamer:
                      n_layers = 4,
                      dist = self.args.actor_dist,
                      min_std = self.args.actor_min_std,
-                     init_std  = self.args.actor_init_std,
+                     init_std = self.args.actor_init_std,
                      activation = self.args.dense_activation_function,
                      discrete = self.args.discrete).to(self.device)
         self.obs_encoder  = ConvEncoder(
@@ -223,18 +223,7 @@ class AgentDreamer:
 
         return next_states, actions, features
 
-    def world_model_loss(self, obs, acs, rews, nonterms):
-
-        obs = preprocess_obs(obs)
-        obs_embed = self.obs_encoder(obs[1:])
-        init_state = self.rssm.init_state(self.args.batch_size, self.device)
-        prior, self.posterior = self.rssm.observe_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args.train_seq_len-1)
-        features = self.rssm.get_feat(self.posterior)
-        rew_dist = self.reward_model(features)
-        obs_dist = self.obs_decoder(features)
-        if self.args.use_disc_model:
-            disc_dist = self.discount_model(features)
-
+    def _kl_loss(self, prior):
         prior_dist = self.rssm.get_dist(prior)
         post_dist = self.rssm.get_dist(self.posterior)
 
@@ -249,11 +238,38 @@ class AgentDreamer:
         else:
             kl_loss = torch.mean(distributions.kl.kl_divergence(post_dist, prior_dist))
             kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), self.args.free_nats))
+        return kl_loss
 
-        obs_loss = -torch.mean(obs_dist.log_prob(obs[1:])) 
+    def _reward_loss(self, rews, features):
+        rew_dist = self.reward_model(features)
         rew_loss = -torch.mean(rew_dist.log_prob(rews[:-1]))
+        return rew_loss
+
+    def _obs_loss(self, obs, features):
+        obs_dist = self.obs_decoder(features)
+        obs_loss = -torch.mean(obs_dist.log_prob(obs[1:]))
+        return obs_loss
+    
+    def _disc_loss(self, nonterms, features):
+        disc_dist = self.discount_model(features)
+        disc_loss = -torch.mean(disc_dist.log_prob(nonterms[:-1]))
+        return disc_loss
+
+    def world_model_loss(self, obs, acs, rews, nonterms):
+
+        obs = preprocess_obs(obs)
+        obs_embed = self.obs_encoder(obs[1:])
+        init_state = self.rssm.init_state(self.args.batch_size, self.device)
+        prior, self.posterior = self.rssm.observe_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args.train_seq_len-1)
+        features = self.rssm.get_feat(self.posterior)
+        
+        rew_loss = self._reward_loss(rews, features)
+        obs_loss = self._obs_loss(obs, features)
+
+        kl_loss = self._kl_loss(prior)
+
         if self.args.use_disc_model:
-            disc_loss = -torch.mean(disc_dist.log_prob(nonterms[:-1]))
+            disc_loss = self._disc_loss(nonterms, features)
 
         if self.args.use_disc_model:
             model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss + self.args.disc_loss_coeff * disc_loss
@@ -281,7 +297,7 @@ class AgentDreamer:
     def update_critic(self):
         with torch.no_grad():
             value_feat = self.imag_feat[:-1].detach()
-            discount   = self.discounts.detach()
+            # discount   = self.discounts.detach() # TODO not use
             value_targ = self.returns.detach()
 
         value_dist = self.critic(value_feat)  
@@ -320,15 +336,15 @@ class AgentDreamer:
     def act_with_world_model(self, obs, prev_state, prev_action, explore=False):
 
         obs = obs['image']
-        obs  = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
         obs_embed = self.obs_encoder(preprocess_obs(obs))
         _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed)
         features = self.rssm.get_feat(posterior)
-        action = self.actor(features, deter=not explore) 
+        action = self.actor(features, deter = not explore) 
         if explore:
             action = self.actor.add_exploration(action, self.args.action_noise)
 
-        return  posterior, action
+        return posterior, action
 
     def act_and_collect_data(self, env, collect_steps):
 
@@ -354,7 +370,7 @@ class AgentDreamer:
                 done = False
                 prev_state = self.rssm.init_state(1, self.device)
                 prev_action = torch.zeros(1, self.action_size).to(self.device)
-                if i!= collect_steps-1:
+                if i != collect_steps - 1:
                     episode_rewards.append(0.0)
             else:
                 obs = next_obs 
@@ -404,9 +420,9 @@ class AgentDreamer:
             seed_episode_rews[-1] += rew
             if done:
                 obs = env.reset()
-                if i!= seed_steps-1:
+                if i != seed_steps - 1:
                     seed_episode_rews.append(0.0)
-                done=False  
+                done = False  
             else:
                 obs = next_obs
 
@@ -415,7 +431,7 @@ class AgentDreamer:
     def save(self, save_path):
 
         torch.save(
-            {'rssm' : self.rssm.state_dict(),
+            {'rssm': self.rssm.state_dict(),
             'actor': self.actor.state_dict(),
             'reward_model': self.reward_model.state_dict(),
             'obs_encoder': self.obs_encoder.state_dict(),
@@ -464,7 +480,7 @@ class AgentDreamer:
         openl = openl.cpu()
         truth = obs[:6].cpu() + 0.5
 
-        if len(recon.shape)==3: #flat
+        if len(recon.shape) == 3: #flat
             recon = recon.reshape(*recon.shape[:-1],*self.shape)
             openl = openl.reshape(*openl.shape[:-1],*self.shape)
             truth = truth.reshape(*truth.shape[:-1],*self.shape)
