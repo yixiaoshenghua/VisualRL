@@ -6,7 +6,7 @@ import torch.distributions as distributions
 
 from utils.replay_buffer import MBReplayBuffer
 from model.models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
-from utils import *
+from utils import FreezeParameters, compute_return, preprocess_obs
 
 
 class AgentDreamer:
@@ -49,31 +49,31 @@ class AgentDreamer:
                      activation = self.args.dense_activation_function,
                      discrete = self.args.discrete).to(self.device)
         self.obs_encoder  = ConvEncoder(
-                            input_shape= self.obs_shape,
+                            input_shape = self.obs_shape,
                             embed_size = self.args.obs_embed_size,
-                            activation =self.args.cnn_activation_function).to(self.device)
+                            activation = self.args.cnn_activation_function).to(self.device)
         self.obs_decoder  = ConvDecoder(
                             stoch_size = self.args.stoch_size,
                             deter_size = self.args.deter_size,
-                            output_shape=self.obs_shape,
+                            output_shape = self.obs_shape,
                             activation = self.args.cnn_activation_function,
-                            discrete=self.args.discrete).to(self.device)
+                            discrete = self.args.discrete).to(self.device)
         self.reward_model = DenseDecoder(
                             stoch_size = self.args.stoch_size,
                             deter_size = self.args.deter_size,
                             output_shape = (1,),
                             n_layers = 2,
-                            units=self.args.num_units,
-                            activation= self.args.dense_activation_function,
+                            units = self.args.num_units,
+                            activation = self.args.dense_activation_function,
                             dist = 'normal',
                             discrete = self.args.discrete).to(self.device)
-        self.critic  = DenseDecoder(
+        self.critic       = DenseDecoder(
                             stoch_size = self.args.stoch_size,
                             deter_size = self.args.deter_size,
                             output_shape = (1,),
                             n_layers = 3,
                             units = self.args.num_units,
-                            activation= self.args.dense_activation_function,
+                            activation = self.args.dense_activation_function,
                             dist = 'normal',
                             discrete = self.args.discrete).to(self.device) 
         if self.args.slow_target:
@@ -83,7 +83,7 @@ class AgentDreamer:
                             output_shape = (1,),
                             n_layers = 3,
                             units = self.args.num_units,
-                            activation= self.args.dense_activation_function,
+                            activation = self.args.dense_activation_function,
                             dist = 'normal',
                             discrete = self.args.discrete).to(self.device) 
             self._updates = 0
@@ -93,8 +93,8 @@ class AgentDreamer:
                                 deter_size = self.args.deter_size,
                                 output_shape = (1,),
                                 n_layers = 2,
-                                units=self.args.num_units,
-                                activation= self.args.dense_activation_function,
+                                units = self.args.num_units,
+                                activation = self.args.dense_activation_function,
                                 dist = 'binary',
                                 discrete = self.args.discrete).to(self.device)
         
@@ -182,7 +182,7 @@ class AgentDreamer:
                 imag_disc_dist = self.discount_model(self.imag_feat)
                 discounts = imag_disc_dist.mean().detach()
             else:
-                discounts =  self.args.discount * torch.ones_like(imag_rews).detach()
+                discounts = self.args.discount * torch.ones_like(imag_rews).detach()
 
         self.returns = compute_return(imag_rews[:-1], imag_vals[:-1],discounts[:-1] \
                                          ,self.args.td_lambda, imag_vals[-1])
