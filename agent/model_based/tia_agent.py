@@ -1,344 +1,650 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.distributions as td
-import copy
-import math
-from typing import Any, Dict, Optional, Type, Union, List
-
-import utils.util as util
-from model.encoder import make_rssm_encoder
-from model.decoder import make_decoder, MaskDecoder, EnsembleMaskDecoder, DenseDecoder
-from model.recurrent_state_space_model import *
-from model.actor import Actor
-from model.critic import Critic
-from agent.model_free.base_agent import AgentSACBase
-from utils.pytorch_util import weight_init
-
-LOG_FREQ = 10000
+import torch.optim as optim
+import torch.distributions as distributions
 
 
-class TIA(nn.Module):
-    """TIA"""
-    def __init__(
-        self, obs_shape, z_dim,
-        encoder, output_type="continuous"
-    ):
-        super(TIA, self).__init__()
-        self.encoder = encoder
-        self.W = nn.Parameter(torch.rand(z_dim, z_dim))
-        self.output_type = output_type
-
-    def encode(
-        self, x, actions, device='cuda'
-    ):
-        """
-        Encoder: z_t = e(o_t, s_{t-1}, a_{t-1})
-        :param x: obs at t
-        :return: z_t, value in r2
-        """
-        batch_t, batch_b, ch, h, w = x.size()
-
-        # Obtain prev actions
-        prev_actions = actions[:-1]
-        prev_act = torch.zeros(
-            batch_b, self.encoder.action_shape,
-            device=device, dtype=prev_actions.dtype
-        ).unsqueeze(0)
-        prev_actions = torch.cat([prev_act, prev_actions], dim=0)
-        # Embed the pixel observation
-        prev_state = self.encoder.representation.initial_state(
-            batch_b, device=device
-        )
-        # Rollout model by taking the same series of actions as the real model
-        embeds = self.encoder.observation_encoder(x)
-        prior, post = self.encoder.rollout.rollout_representation(
-            batch_t, embeds, prev_actions, prev_state
-        )
-
-        return prior, post
+from utils.replay_buffer import MBReplayBuffer
+from model.models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder, MaskConvDecoder, EnsembleMaskConvDecoder
+from utils import *
 
 
-class AgentTIA(AgentSACBase):
-    def __init__(
-        self, 
-        obs_shape: int,
-        action_shape: int,
-        device: Union[torch.device, str],
-        hidden_dim: int = 256,
-        discount: float = 0.99,
-        init_temperature: float = 0.01,
-        alpha_lr: float = 1e-3,
-        alpha_beta: float = 0.9,
-        actor_lr: float = 1e-3,
-        actor_beta: float = 0.9,
-        actor_log_std_min: float = -10,
-        actor_log_std_max: float = 2,
-        actor_update_freq: int = 2,
-        critic_lr: float = 1e-3,
-        critic_beta: float = 0.9,
-        critic_tau: float = 0.005,
-        critic_target_update_freq: int = 2,
-        encoder_type: str = 'rssm',
-        decoder_type: str = 'pixel',
-        encoder_feature_dim: int = 50,
-        encoder_tau: float = 0.005,
-        encoder_lr: float = 6e-4,
-        num_layers: int = 4,
-        num_filters: int = 32,
-        num_units: int = 400,
-        stochastic_size: int = 30,
-        deterministic_size: int = 200,
-        grad_clip: float = 100.0,
-        disen_reward_lr: float = 6e-4,
-        reward_scale: float = 1.0,
-        reward_opt_num: int = 20,
-        free_nats: float = 3.0,
-        kl_scale: float = 1.0,
-        disen_kl_scale: float = 1.0,
-        disen_neg_rew_scale: float = 20000.0,
-        disen_rec_scale: float = 1.5,
-        disclam: float = 0.95,
-        batch_size: int = 50,
-        seq_len: int = 50,
-        builtin_encoder: bool = False,
-    ):
-        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
-        self.grad_clip = grad_clip
-        self.reward_opt_num = reward_opt_num
-        self.reward_scale = reward_scale
-        self.free_nats = free_nats
-        self.kl_scale = kl_scale
-        self.disen_kl_scale = disen_kl_scale
-        self.disen_neg_rew_scale = disen_neg_rew_scale
-        self.disen_rec_scale = disen_rec_scale
-        self.stoch_size = stochastic_size
-        self.deter_size = deterministic_size
-        self.disclam = disclam
-        self.batch_size = batch_size
-        self.seq_len = seq_len
-        feature_dim = stochastic_size + deterministic_size
+class AgentTIA:
 
-        # distractor dynamic model
-        self.disen_encoder = make_rssm_encoder(
-            encoder_type, obs_shape, action_shape, encoder_feature_dim,
-            stochastic_size, deterministic_size, num_layers,
-            num_filters, hidden_dim, output_logits=True
-        ).to(self.device)
-        self.disen_model = TIA(obs_shape, feature_dim, self.disen_encoder, output_type='continuous')
-        self.disen_reward = DenseDecoder((), 2, feature_dim, num_units).to(self.device)
-        self.disen_decoder = self._build_decoder(decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters)
+    def __init__(self, args, obs_shape, action_size, device, restore=False):
 
-        # task dynamic model
-        self.task_encoder = make_rssm_encoder(
-            encoder_type, obs_shape, action_shape, encoder_feature_dim,
-            stochastic_size, deterministic_size, num_layers,
-            num_filters, hidden_dim, output_logits=True
-        ).to(self.device)
-        self.task_model = TIA(obs_shape, feature_dim, self.task_encoder, output_type='continuous')
-        self.task_reward = DenseDecoder((), 2, feature_dim, num_units).to(self.device)
+        self.args = args
+        if self.args.actor_grad == 'auto':
+            self.args.actor_grad = 'dynamics' if self.args.algo == 'Dreamerv1' else 'reinforce'
+        self.obs_shape = obs_shape
+        self.action_size = action_size
+        self.device = device
+        self.restore = args.restore
+        self.restore_path = args.checkpoint_path
+        self.data_buffer = MBReplayBuffer(self.args.buffer_size, self.obs_shape, self.action_size,
+                                                    self.args.train_seq_len, self.args.batch_size)
+        self.step = args.seed_steps
+        self._build_model(restore=self.restore)
 
-        self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, builtin_encoder)
-        self.critic = DenseDecoder((feature_dim), 3, num_units).to(self.device)
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=actor_lr, betas=(actor_beta, 0.999)
-        )
-        self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=critic_lr, betas=(critic_beta, 0.999)
-        )
+    def _build_model(self, restore):
 
-        self.disen_optimizer = torch.optim.Adam(list(self.disen_model.parameters()) + list(self.disen_decoder.parameters()), lr=encoder_lr)
-        self.disen_reward_optimizer = torch.optim.Adam(self.disen_reward.parameters(), lr=disen_reward_lr)
-        self.task_optimizer = torch.optim.Adam(list(self.task_model.parameters()) + list(self.task_reward.parameters()), lr=encoder_lr)
-
-
-        # joint decode
-        self.joint_mask_decoder = self._build_main_decoder(obs_shape, feature_dim, num_layers, num_filters)
-        self.joint_mask_decoder_optimizer = torch.optim.Adam(self.joint_mask_decoder.parameters(), lr=encoder_lr)
-
-
-        self.train()
-
-    def train(self, training=True):
-        self.training = training
-        self.actor.train(training)
-
-    def _build_main_decoder(self, obs_shape, feature_dim, num_layers, num_filters, dtype=torch.float32):
-        main_mask_decoder = MaskDecoder(obs_shape, feature_dim, num_layers, num_filters).to(self.device)
-        dis_mask_decoder = MaskDecoder(obs_shape, feature_dim, num_layers, num_filters).to(self.device)
-        joint_mask_decoder = EnsembleMaskDecoder(main_mask_decoder, dis_mask_decoder, dtype).to(self.device)
-        return joint_mask_decoder
+        self.main_rssm = RSSM(
+                    action_size =self.action_size,
+                    stoch_size = self.args.stoch_size,
+                    deter_size = self.args.deter_size,
+                    hidden_size = self.args.hidden_size,
+                    obs_embed_size = self.args.obs_embed_size,
+                    activation = self.args.dense_activation_function,
+                    discrete = self.args.discrete,
+                    future=self.args.rssm_attention,
+                    reverse=self.args.rssm_reverse,
+                    device=self.device).to(self.device)
+        self.disen_rssm = RSSM(
+                    action_size =self.action_size,
+                    stoch_size = self.args.stoch_size,
+                    deter_size = self.args.deter_size,
+                    hidden_size = self.args.hidden_size,
+                    obs_embed_size = self.args.obs_embed_size,
+                    activation = self.args.dense_activation_function,
+                    discrete = self.args.discrete,
+                    future=self.args.rssm_attention,
+                    reverse=self.args.rssm_reverse,
+                    device=self.device).to(self.device)
+        self.actor = ActionDecoder(
+                     action_size = self.action_size,
+                     stoch_size = self.args.stoch_size,
+                     deter_size = self.args.deter_size,
+                     units = self.args.num_units,
+                     n_layers = 4,
+                     dist = self.args.actor_dist,
+                     min_std = self.args.actor_min_std,
+                     init_std  = self.args.actor_init_std,
+                     activation = self.args.dense_activation_function,
+                     discrete = self.args.discrete).to(self.device)
+        self.main_obs_encoder  = ConvEncoder(
+                            input_shape= self.obs_shape,
+                            embed_size = self.args.obs_embed_size,
+                            activation =self.args.cnn_activation_function).to(self.device)
+        self.main_obs_decoder  = MaskConvDecoder(
+                            stoch_size = self.args.stoch_size,
+                            deter_size = self.args.deter_size,
+                            output_shape = (6,*self.obs_shape[1:]),
+                            activation = self.args.cnn_activation_function,
+                            discrete=self.args.discrete).to(self.device)
+        self.disen_obs_encoder = ConvEncoder(
+                            input_shape= self.obs_shape,
+                            embed_size = self.args.obs_embed_size,
+                            activation =self.args.cnn_activation_function).to(self.device)
+        self.disen_obs_decoder = MaskConvDecoder(
+                            stoch_size = self.args.stoch_size,
+                            deter_size = self.args.deter_size,
+                            output_shape = (6,*self.obs_shape[1:]),
+                            activation = self.args.cnn_activation_function,
+                            discrete=self.args.discrete).to(self.device)
+        self.disen_only_obs_decoder = ConvDecoder(
+                            stoch_size = self.args.stoch_size,
+                            deter_size = self.args.deter_size,
+                            output_shape=self.obs_shape,
+                            activation = self.args.cnn_activation_function,
+                            discrete=self.args.discrete).to(self.device)
+        self.joint_obs_decoder = EnsembleMaskConvDecoder(
+                            decoder1 = self.main_obs_decoder,
+                            decoder2 = self.disen_obs_decoder).to(self.device)
+        self.main_reward_model = DenseDecoder(
+                            stoch_size = self.args.stoch_size,
+                            deter_size = self.args.deter_size,
+                            output_shape = (1,),
+                            n_layers = 2,
+                            units=self.args.num_units,
+                            activation= self.args.dense_activation_function,
+                            dist = 'normal',
+                            discrete = self.args.discrete).to(self.device)
+        self.disen_reward_model = DenseDecoder(
+                            stoch_size = self.args.stoch_size,
+                            deter_size = self.args.deter_size,
+                            output_shape = (1,),
+                            n_layers = 2,
+                            units=self.args.num_units,
+                            activation= self.args.dense_activation_function,
+                            dist = 'normal',
+                            discrete = self.args.discrete).to(self.device)
+        self.critic  = DenseDecoder(
+                            stoch_size = self.args.stoch_size,
+                            deter_size = self.args.deter_size,
+                            output_shape = (1,),
+                            n_layers = 3,
+                            units = self.args.num_units,
+                            activation= self.args.dense_activation_function,
+                            dist = 'normal',
+                            discrete = self.args.discrete).to(self.device) 
+        if self.args.slow_target:
+            self.target_critic = DenseDecoder(
+                            stoch_size = self.args.stoch_size,
+                            deter_size = self.args.deter_size,
+                            output_shape = (1,),
+                            n_layers = 3,
+                            units = self.args.num_units,
+                            activation= self.args.dense_activation_function,
+                            dist = 'normal',
+                            discrete = self.args.discrete).to(self.device) 
+            self._updates = 0
+        if self.args.use_disc_model:  
+            self.discount_model = DenseDecoder(
+                                stoch_size = self.args.stoch_size,
+                                deter_size = self.args.deter_size,
+                                output_shape = (1,),
+                                n_layers = 2,
+                                units=self.args.num_units,
+                                activation= self.args.dense_activation_function,
+                                dist = 'binary',
+                                discrete = self.args.discrete).to(self.device)
         
-    def _build_decoder(self, decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters):
-        decoder = None
-        if decoder_type != 'identity':
-            # create decoder
-            decoder = make_decoder(
-                decoder_type, obs_shape, encoder_feature_dim, num_layers,
-                num_filters
-            ).to(self.device)
-            decoder.apply(weight_init)
-        return decoder
+        if self.args.use_disc_model:
+            self.world_model_params = list(self.main_rssm.parameters()) + list(self.main_obs_encoder.parameters()) \
+              + list(self.main_reward_model.parameters()) + list(self.discount_model.parameters())
+        else:
+            self.world_model_params = list(self.main_rssm.parameters()) + list(self.main_obs_encoder.parameters()) \
+              + list(self.main_reward_model.parameters())
+        self.disen_model_params = list(self.disen_rssm.parameters()) + list(self.disen_obs_encoder.parameters()) + list(self.disen_only_obs_decoder.parameters())
+    
+        self.world_model_opt = optim.Adam(self.world_model_params, self.args.model_learning_rate)
+        self.critic_opt = optim.Adam(self.critic.parameters(), self.args.value_learning_rate)
+        self.actor_opt = optim.Adam(self.actor.parameters(), self.args.actor_learning_rate)
+        self.decoder_opt = optim.Adam(self.joint_obs_decoder.parameters(), self.args.model_learning_rate)
+        self.disen_model_opt = optim.Adam(self.disen_model_params, self.args.model_learning_rate)
+        self.disen_reward_opt = optim.Adam(self.disen_reward_model.parameters(), self.args.disen_reward_learning_rate)
 
-    def imagine_ahead(self, post, planning_horizon=15):
-        '''
-        imagine_ahead is the function to draw the imaginary tracjectory using the dynamics model, actor, critic.
-        Input: current state (posterior), current belief (hidden), policy, transition_model  # torch.Size([50, 30]) torch.Size([50, 200])
-        Output: generated trajectory of features includes beliefs, prior_states, prior_means, prior_std_devs
-                torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
-        '''
-        prev_state = flatten_states(post)
+        if self.args.use_disc_model:
+            self.world_model_modules = [self.main_rssm, self.main_obs_encoder, self.main_reward_model, self.discount_model]
+        else:
+            self.world_model_modules = [self.main_rssm, self.main_obs_encoder, self.main_reward_model]
+        self.value_modules = [self.critic]
+        self.actor_modules = [self.actor]
+        self.disen_modules = [self.disen_obs_encoder, self.disen_rssm, self.disen_only_obs_decoder]
+        self.decoder_modules = [self.joint_obs_decoder]
+        self.disen_reward_modules = [self.disen_reward_model]
 
-        # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
-        T = planning_horizon
-        prior_states = RSSMState(
-            torch.zeros(T, self._stoch_size),
-            torch.zeros(T, self._stoch_size),
-            torch.zeros(T, self._stoch_size),
-            torch.zeros(T, self._deter_size),
-        )
-        prior_states[0] = prev_state
-        # Loop over time sequence
-        for t in range(T - 1):
-            prev_state = prior_states[t]
-            prev_action = self.sample_action(get_feat(prev_state).detach())
-            prior_states[t + 1] = self.task_model.encoder.transition(prev_action, prev_state)
+
+        if restore:
+            self.load(self.restore_path)
+
+    def actor_loss(self):
+        loss_dict, log_dict = {}, {}
+        with torch.no_grad():
+            posterior = self.main_rssm.detach_state(self.main_rssm.seq_to_batch(self.posterior))
+
+        with FreezeParameters(self.world_model_modules):
+            imag_states, imag_actions, imag_feats = self.imagine(posterior, self.args.imagine_horizon)
+
+        self.imag_feat = self.main_rssm.get_feat(imag_states)
+
+        with FreezeParameters(self.world_model_modules + self.value_modules):
+            imag_rew_dist = self.main_reward_model(self.imag_feat)
+            imag_val_dist = self.critic(self.imag_feat)
+
+            imag_rews = imag_rew_dist.mean
+            imag_vals = imag_val_dist.mean
+            if self.args.use_disc_model:
+                imag_disc_dist = self.discount_model(self.imag_feat)
+                discounts = imag_disc_dist.mean().detach()
+            else:
+                discounts =  self.args.discount * torch.ones_like(imag_rews).detach()
+
+        self.returns = compute_return(imag_rews[:-1], imag_vals[:-1],discounts[:-1] \
+                                         ,self.args.td_lambda, imag_vals[-1])
+
+        discounts = torch.cat([torch.ones_like(discounts[:1]), discounts[1:-1]], 0)
+        self.discounts = torch.cumprod(discounts, 0).detach()
+        actor_loss = -torch.mean(self.discounts * self.returns)
         
-        # Return new hidden states
-        # imagined_traj = [beliefs, prior_states, prior_means, prior_std_devs]
-        imag_feat = get_feat(prior_states)
-        return imag_feat
+        loss_dict['actor_loss'] = actor_loss
+        log_dict['train/actor_loss'] = actor_loss.item()
+        
+        return loss_dict, log_dict
 
-    def update(self, replay_buffer, L, step):
-        # obs (L, n, *img_size), action (L, n, acs_dim), reward (L, n), not_done (L, n)
-        obs, action, reward, not_done = replay_buffer.sample_sequence(self.batch_size, self.seq_len)
-        L.log('train/batch_reward', reward.mean(), step)
+    def critic_loss(self):
+        loss_dict, log_dict = {}, {}
+        with torch.no_grad():
+            value_feat = self.imag_feat[:-1].detach()
+            discount   = self.discounts.detach()
+            value_targ = self.returns.detach()
 
-        # main, task_model is a TIA contains rssm_encoder
-        # observation_encoder(obs) -> emb, representation(emb, prev_acs, prev_state) -> prior, post
-        prior, post = self.task_model.encode(obs, action)
-        feat = get_feat(post)
+        value_dist = self.critic(value_feat)  
+        value_loss = -torch.mean(self.discounts * value_dist.log_prob(value_targ).unsqueeze(-1))
 
-        # disen, disen_model is a TIA contains rssm_encoder
-        prior_disen, post_disen = self.disen_model.encode(obs, action)
-        feat_disen = get_feat(post_disen)
+        loss_dict['value_loss'] = value_loss
+        log_dict['train/value_loss'] = value_loss.item()
+
+        return loss_dict, log_dict
+
+    def world_model_loss(self, obs, acs, rews, nonterms):
+        loss_dict, log_dict = {}, {}
+        obs = preprocess_obs(obs)
+        # main
+        main_obs_embed = self.main_obs_encoder(obs[1:]) # (T-1, n, e)
+        main_init_state = self.main_rssm.init_state(self.args.batch_size, self.device)
+        prior, self.posterior = self.main_rssm.observe_rollout(main_obs_embed, acs[:-1], nonterms[:-1], main_init_state, self.args.train_seq_len-1)
+        features = self.main_rssm.get_feat(self.posterior)
+
+        # disen
+        disen_obs_embed = self.disen_obs_encoder(obs[1:]) # (T-1, n, e)
+        disen_init_state = self.disen_rssm.init_state(self.args.batch_size, self.device)
+        disen_prior, self.disen_posterior = self.disen_rssm.observe_rollout(disen_obs_embed, acs[:-1], nonterms[:-1], disen_init_state, self.args.train_seq_len-1)
+        disen_features = self.disen_rssm.get_feat(self.disen_posterior)
 
         # disen image pred
-        image_pred_disen = self.disen_decoder(feat_disen)
+        image_pred_disen = self.disen_only_obs_decoder(disen_features)
 
         # joint image pred
-        image_pred_joint, image_pred_joint_main, image_pred_joint_disen, mask_pred = self.joint_mask_decoder(feat, feat_disen)
+        image_pred_joint, image_pred_joint_main, image_pred_joint_disen, mask_pred = self.joint_obs_decoder(features, disen_features)
 
-        # reward pred
-        reward_pred = self.task_reward(feat)
+        # main reward pred
+        rew_dist = self.main_reward_model(features)
 
         # optimize disen reward predictor till optimal
-        for _ in range(self.reward_opt_num):
-            reward_pred_disen = self.disen_reward(feat_disen.detach())
-            reward_like_disen = reward_pred_disen.log_prob(reward)
-            reward_loss_disen = -reward_like_disen.mean()
-            self.disen_reward_optimizer.zero_grad()
-            reward_loss_disen.backward()
-            self.disen_reward_optimizer.step()
+        for _ in range(self.args.num_reward_opt_iters):
+            disen_rew_dist = self.disen_reward_model(disen_features.detach())
+            disen_rew_loss = -torch.mean(disen_rew_dist.log_prob(rews[:-1]))
+            self.disen_reward_opt.zero_grad()
+            disen_rew_loss.backward()
+            self.disen_reward_opt.step()
 
         # disen reward pred with optimal reward predictor
-        reward_pred_disen = self.disen_reward(feat_disen)
-        reward_like_disen = torch.mean(reward_pred_disen.log_prob(reward))
+        disen_rew_dist = self.disen_reward_model(disen_features)
 
         # main model loss
-        likes = dict()
-        likes['image'] = torch.mean(image_pred_joint.log_prob(obs))
-        likes['reward'] = torch.mean(reward_pred.log_prob(reward)) * self.reward_scale
+        if self.args.use_disc_model:
+            disc_dist = self.discount_model(features)
 
-        prior_dist = get_dist(prior)
-        post_dist = get_dist(post)
-        div = torch.mean(torch.distributions.kl_divergence(prior_dist, post_dist))
-        div = torch.max(div, self.free_nats)
+        kl_loss = self.main_rssm.get_kl_loss(prior, self.posterior, self.args.kl_alpha, self.args.free_nats, self.args.algo=='TIAv2')
 
-        model_loss = self.kl_scale * div - sum(likes.values())
+        obs_loss = -torch.mean(image_pred_joint.log_prob(obs[1:])) 
+        rew_loss = -torch.mean(rew_dist.log_prob(rews[:-1]))
+        if self.args.use_disc_model:
+            disc_loss = -torch.mean(disc_dist.log_prob(nonterms[:-1]))
+            loss_dict['world_model/disc_loss'] = disc_loss
+            log_dict['world_model/disc_loss'] = disc_loss.item()
 
-        # disen model loss with reward negative gradient
-        likes_disen = dict()
-        likes_disen['image'] = torch.mean(image_pred_joint.log_prob(obs))
-        likes_disen['disen_only'] = torch.mean(image_pred_disen.log_prob(obs))
-
-        reward_like_disen = reward_pred_disen.log_prob(reward)
-        reward_like_disen = torch.mean(reward_like_disen)
-        reward_loss_disen = -reward_like_disen
-
-        prior_dist_disen = get_dist(prior_disen)
-        post_dist_disen = get_dist(post_disen)
-        div_disen = torch.mean(torch.distributions.kl_divergence(
-            post_dist_disen, prior_dist_disen))
-        div_disen = torch.max(div_disen, self.free_nats)
-
-        model_loss_disen = div_disen * self.disen_kl_scale + \
-            reward_like_disen * self.disen_neg_rew_scale - \
-            likes_disen['image'] - likes_disen['disen_only'] * self.disen_rec_scale
-
-        decode_loss = model_loss_disen + model_loss
-        self.task_optimizer.zero_grad()
-        self.disen_optimizer.zero_grad()
-        self.joint_mask_decoder_optimizer.zero_grad()
-        model_loss.backward()
-        model_loss_disen.backward()
-        decode_loss.backward()
-        self.task_optimizer.step()
-        self.disen_optimizer.step()
-        self.joint_mask_decoder_optimizer.step()
-
-        # update value and action
-        image_feat = self.task_model.imagine_ahead(post, self.actor)
-        rewards = self.task_reward(image_feat).mode()
-        pcont = self.discount * torch.ones_like(rewards).to(self.device)
-        values = self.critic(image_feat).mode()
-        returns = util.lambda_return(rewards[:-1], values[:-1],
-                               bootstrap=values[-1], discount=self.discount, lambda_=self.disclam)
-        self.update_critic(image_feat, returns, L, step)
-
-        if step % self.actor_update_freq == 0:
-            self.update_actor(returns, L, step)
-
-    def update_critic(self, imag_feat, returns, L, step):
-        value_pred = self.critic(imag_feat)[:-1]
-        target = returns.detach()
-        critic_loss = -torch.mean(self.discount * value_pred.log_prob(target))
-        L.log('train_critic/loss', critic_loss, step)
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        self.critic_optimizer.step()
+        if self.args.use_disc_model:
+            model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss + self.args.disc_loss_coeff * disc_loss
+        else:
+            model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss 
         
-    def update_actor(self, returns, L, step):
-        actor_loss = -torch.mean(self.discount * returns)
-        L.log('train_actor/loss', actor_loss, step)
-        self.actor_optimizer.zero_grad()
+        # disen model loss
+        disen_kl_loss = self.disen_rssm.get_kl_loss(disen_prior, self.disen_posterior, self.args.kl_alpha, self.args.free_nats, self.args.algo=='TIAv2')
+
+        disen_obs_loss = -torch.mean(image_pred_joint.log_prob(obs[1:])) 
+        disen_only_obs_loss = -torch.mean(image_pred_disen.log_prob(obs[1:]))
+        disen_rew_loss = -torch.mean(disen_rew_dist.log_prob(rews[:-1]))
+
+        disen_model_loss = self.args.disen_kl_loss_coeff * disen_kl_loss + disen_obs_loss \
+            + disen_only_obs_loss * self.args.disen_rec_loss_coeff - disen_rew_loss * self.args.disen_neg_rew_loss_coeff
+        
+        decode_loss = model_loss + disen_model_loss
+        
+        loss_dict['world_model/kl_loss'] = kl_loss
+        loss_dict['world_model/obs_loss'] = obs_loss
+        loss_dict['world_model/rew_loss'] = rew_loss
+        loss_dict['world_model/model_loss'] = model_loss
+        log_dict['world_model/kl_loss'] = kl_loss.item()
+        log_dict['world_model/obs_loss'] = obs_loss.item()
+        log_dict['world_model/rew_loss'] = rew_loss.item()
+        log_dict['world_model/model_loss'] = model_loss.item()
+        loss_dict['world_model/decode_loss'] = decode_loss
+        log_dict['world_model/decode_loss'] = decode_loss.item()
+
+        loss_dict['disen_model/kl_loss'] = disen_kl_loss
+        loss_dict['disen_model/obs_loss'] = disen_obs_loss
+        loss_dict['disen_model/only_obs_loss'] = disen_only_obs_loss
+        loss_dict['disen_model/rew_loss'] = disen_rew_loss
+        loss_dict['disen_model/model_loss'] = disen_model_loss
+        log_dict['disen_model/kl_loss'] = disen_kl_loss.item()
+        log_dict['disen_model/obs_loss'] = disen_obs_loss.item()
+        log_dict['disen_model/only_obs_loss'] = disen_only_obs_loss.item()
+        log_dict['disen_model/rew_loss'] = disen_rew_loss.item()
+        log_dict['disen_model/model_loss'] = disen_model_loss.item()
+
+        return loss_dict, log_dict
+
+    def update_world_model(self, obs, acs, rews, nonterms):
+        wm_loss_dict, wm_log_dict = self.world_model_loss(obs, acs, rews, nonterms)
+        main_model_loss = wm_loss_dict['world_model/model_loss']
+        disen_model_loss = wm_loss_dict['disen_model/model_loss']
+        decode_loss = wm_loss_dict['world_model/decode_loss']
+        self.world_model_opt.zero_grad()
+        self.disen_model_opt.zero_grad()
+        self.decoder_opt.zero_grad()
+        main_model_loss.backward(retain_graph=True)
+        disen_model_loss.backward(retain_graph=True)
+        decode_loss.backward()
+        nn.utils.clip_grad_norm_(self.world_model_params, self.args.grad_clip_norm)
+        nn.utils.clip_grad_norm_(self.disen_model_params, self.args.grad_clip_norm)
+        nn.utils.clip_grad_norm_(self.joint_obs_decoder.parameters(), self.args.grad_clip_norm)
+        self.world_model_opt.step()
+        self.disen_model_opt.step()
+        self.decoder_opt.step()
+        return wm_log_dict
+    
+    def update_actor(self):
+        ac_loss_dict, ac_log_dict = self.actor_loss()
+        actor_loss = ac_loss_dict['actor_loss']
+        self.actor_opt.zero_grad()
         actor_loss.backward()
-        self.actor_optimizer.step()
+        nn.utils.clip_grad_norm_(self.actor.parameters(), self.args.grad_clip_norm)
+        self.actor_opt.step()
+        return ac_log_dict
+    
+    def update_critic(self):
+        val_loss_dict, val_log_dict = self.critic_loss()
+        value_loss = val_loss_dict['value_loss']
+        self.critic_opt.zero_grad()
+        value_loss.backward()
+        nn.utils.clip_grad_norm_(self.critic.parameters(), self.args.grad_clip_norm)
+        self.critic_opt.step()
+        return val_log_dict
 
+    def target(self, feat, reward, disc):
+        if self.args.slow_target:
+            value = self.target_critic(feat).mean
+        else:
+            value = self.critic(feat).mean
+        target = compute_return(reward[:-1], value[:-1], disc[:-1], \
+                                self.args.td_lambda, value[-1])
+        weight = torch.cumprod(torch.cat([torch.ones_like(disc[:1]), disc[1:-1]], 0).detach(), 0)
+        return target, weight
 
-    def save(self, model_dir, step):
+    def update_slow_target(self):
+        if self.args.slow_target:
+            if self._updates % self.args.slow_target_update == 0:
+                mix = 1.0 if self._updates == 0 else float(
+                    self.args.slow_target_fraction)
+                for s, d in zip(self.critic.parameters(), self.target_critic.parameters()):
+                    d.data = mix * s.data + (1 - mix) * d.data
+            self._updates += 1
+
+    def update(self):
+        log_dict = {}
+        obs, acs, rews, terms = self.data_buffer.sample()
+        obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
+        acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
+        rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
+        nonterms = torch.tensor((1.0-terms), dtype=torch.float32).to(self.device).unsqueeze(-1)
+
+        wm_log_dict = self.update_world_model(obs, acs, rews, nonterms)
+        ac_log_dict = self.update_actor()
+        val_log_dict = self.update_critic()
+        self.update_slow_target()
+
+        log_dict.update(wm_log_dict)
+        log_dict.update(ac_log_dict)
+        log_dict.update(val_log_dict)
+
+        return log_dict
+
+    def act_with_world_model(self, obs, prev_state, prev_action, explore=False):
+
+        obs = obs['image']
+        obs  = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.main_obs_encoder(preprocess_obs(obs))
+        _, posterior = self.main_rssm.observe_step(prev_state, prev_action, obs_embed)
+        features = self.main_rssm.get_feat(posterior)
+        action = self.actor(features, deter=not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
+
+        return  posterior, action
+
+    def act_and_collect_data(self, env, collect_steps):
+
+        obs = env.reset()
+        done = False
+        prev_state = self.main_rssm.init_state(1, self.device)
+        prev_action = torch.zeros(1, self.action_size).to(self.device)
+
+        episode_rewards = [0.0]
+
+        for i in range(collect_steps):
+
+            with torch.no_grad():
+                posterior, action = self.act_with_world_model(obs, prev_state, prev_action, explore=True)
+            action = action[0].cpu().numpy()
+            next_obs, rew, done, _ = env.step(action)
+            self.data_buffer.add(obs, action, rew, done)
+
+            episode_rewards[-1] += rew
+
+            if done:
+                obs = env.reset()
+                done = False
+                prev_state = self.main_rssm.init_state(1, self.device)
+                prev_action = torch.zeros(1, self.action_size).to(self.device)
+                if i!= collect_steps-1:
+                    episode_rewards.append(0.0)
+            else:
+                obs = next_obs 
+                prev_state = posterior
+                prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
+
+        return np.array(episode_rewards)
+
+    def imagine(self, prev_state, horizon):
+
+        rssm_state = prev_state
+        next_states = []
+        features = []
+        actions = []
+
+        for t in range(horizon):
+            feature = self.main_rssm.get_feat(rssm_state)
+            action = self.actor(feature.detach())
+            rssm_state = self.main_rssm.imagine_step(rssm_state, action)
+            next_states.append(rssm_state)
+            actions.append(action)
+            features.append(feature)
+
+        next_states = self.main_rssm.stack_states(next_states)
+        features = torch.cat(features, dim=0)
+        actions = torch.cat(actions, dim=0)
+
+        return next_states, actions, features
+
+    def evaluate(self, env, eval_episodes, render=False):
+
+        episode_rew = np.zeros((eval_episodes))
+
+        video_images = [[] for _ in range(eval_episodes)]
+
+        for i in range(eval_episodes):
+            obs = env.reset()
+            done = False
+            prev_state = self.main_rssm.init_state(1, self.device)
+            prev_action = torch.zeros(1, self.action_size).to(self.device)
+
+            while not done:
+                with torch.no_grad():
+                    posterior, action = self.act_with_world_model(obs, prev_state, prev_action)
+                action = action[0].cpu().numpy()
+                next_obs, rew, done, _ = env.step(action)
+                prev_state = posterior
+                prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
+
+                episode_rew[i] += rew
+
+                if render:
+                    video_images[i].append(obs['image'].transpose(1, 2, 0).copy())
+                obs = next_obs
+
+        # video prediction
+        obs, acs, rews, terms = self.data_buffer.sample()
+        obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
+        acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
+        nonterms = torch.tensor((1.0-terms), dtype=torch.float32).to(self.device).unsqueeze(-1)
+        pred_videos = self.video_pred(obs, acs, nonterms)
+
+        return episode_rew, np.array(video_images[:self.args.max_videos_to_save]), pred_videos # (T, H, W, C)
+
+    def collect_random_episodes(self, env, seed_steps):
+
+        obs = env.reset()
+        done = False
+        seed_episode_rews = [0.0]
+
+        for i in range(seed_steps):
+            action = env.action_space.sample()
+            next_obs, rew, done, _ = env.step(action)
+            
+            self.data_buffer.add(obs, action, rew, done)
+            seed_episode_rews[-1] += rew
+            if done:
+                obs = env.reset()
+                if i!= seed_steps-1:
+                    seed_episode_rews.append(0.0)
+                done=False  
+            else:
+                obs = next_obs
+
+        return np.array(seed_episode_rews)
+
+    def save(self, save_path):
+
         torch.save(
-            self.actor.state_dict(), '%s/actor_%s.pt' % (model_dir, step)
-        )
-        torch.save(
-            self.critic.state_dict(), '%s/critic_%s.pt' % (model_dir, step)
-        )
-        if self.decoder is not None:
-            torch.save(
-                self.decoder.state_dict(),
-                '%s/decoder_%s.pt' % (model_dir, step)
-            )
+            {'main_rssm' : self.main_rssm.state_dict(),
+            'actor': self.actor.state_dict(),
+            'critic': self.critic.state_dict(),
+            'main_reward_model': self.main_reward_model.state_dict(),
+            'main_obs_encoder': self.main_obs_encoder.state_dict(),
+            'disen_rssm': self.disen_rssm.state_dict(),
+            'disen_obs_encoder': self.disen_obs_encoder.state_dict(),
+            'disen_only_decoder':self.disen_only_obs_decoder.state_dict(),
+            'disen_reward_model': self.disen_reward_model.state_dict(),
+            'joint_obs_decoder': self.joint_obs_decoder.state_dict(),
+            'discount_model': self.discount_model.state_dict() if self.args.use_disc_model else None,
+            'actor_optimizer': self.actor_opt.state_dict(),
+            'critic_optimizer': self.critic_opt.state_dict(),
+            'world_model_optimizer': self.world_model_opt.state_dict(),
+            'disen_model_optimizer': self.disen_model_opt.state_dict(),
+            'disen_reward_optimizer': self.disen_reward_opt.state_dict(),
+            'decoder_optimizer': self.decoder_opt.state_dict()}, save_path)
 
-    def load(self, model_dir, step):
-        self.actor.load_state_dict(
-            torch.load('%s/actor_%s.pt' % (model_dir, step))
-        )
-        self.critic.load_state_dict(
-            torch.load('%s/critic_%s.pt' % (model_dir, step))
-        )
-        if self.decoder is not None:
-            self.decoder.load_state_dict(
-                torch.load('%s/decoder_%s.pt' % (model_dir, step))
-            )
+    def load(self, ckpt_path):
+
+        checkpoint = torch.load(ckpt_path)
+        self.main_rssm.load_state_dict(checkpoint['main_rssm'])
+        self.actor.load_state_dict(checkpoint['actor'])
+        self.critic.load_state_dict(checkpoint['critic'])
+        self.main_reward_model.load_state_dict(checkpoint['main_reward_model'])
+        self.main_obs_encoder.load_state_dict(checkpoint['main_obs_encoder'])
+        self.disen_rssm.load_state_dict(checkpoint['disen_rssm'])
+        self.disen_reward_model.load_state_dict(checkpoint['disen_reward_model'])
+        self.disen_obs_encoder.load_state_dict(checkpoint['disen_obs_encoder'])
+        self.disen_only_obs_decoder.load_state_dict(checkpoint['disen_only_obs_decoder'])
+        self.joint_obs_decoder.load_state_dict(checkpoint['joint_obs_decoder'])
+        if self.args.use_disc_model and (checkpoint['discount_model'] is not None):
+            self.discount_model.load_state_dict(checkpoint['discount_model'])
+
+        self.world_model_opt.load_state_dict(checkpoint['world_model_optimizer'])
+        self.actor_opt.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic_opt.load_state_dict(checkpoint['critic_optimizer'])
+        self.disen_model_opt.load_state_dict(checkpoint['disen_model_optimizer'])
+        self.disen_reward_opt.load_state_dict(checkpoint['disen_reward_optimizer'])
+        self.decoder_opt.load_state_dict(checkpoint['decoder_optimizer'])
+
+    def set_step(self, step):
+        self.step = step
+
+    @torch.no_grad()
+    def video_pred(self, obs, acs, nonterms):
+        '''
+        Log images reconstructions
+        '''
+        T = obs.shape[0]
+        obs = preprocess_obs(obs)
+        # main decoder
+        main_obs_embed = self.main_obs_encoder(obs[1:])
+        main_init_observe_state = self.main_rssm.init_state(4, self.device)
+        _, main_posterior = self.main_rssm.observe_rollout(main_obs_embed[:5, :4], acs[:5, :4], nonterms[:5, :4], main_init_observe_state, 5) # (5, 4, ...)
+        main_observe_features = self.main_rssm.get_feat(main_posterior)
+
+        # disen decoder
+        disen_obs_embed = self.disen_obs_encoder(obs[1:])
+        disen_init_observe_state = self.disen_rssm.init_state(4, self.device)
+        _, disen_posterior = self.disen_rssm.observe_rollout(disen_obs_embed[:5, :4], acs[:5, :4], nonterms[:5, :4], disen_init_observe_state, 5) # (5, 4, ...)
+        disen_observe_features = self.disen_rssm.get_feat(disen_posterior)
+
+        
+        image_recon_joint, image_recon_joint_main, image_recon_joint_disen, mask_recon = self.joint_obs_decoder(main_observe_features, disen_observe_features)
+
+        # joint log
+        joint_recon = image_recon_joint.mean # (5, 4, 3, 64, 64)
+
+        main_init_imagine_state = {k: v[-1, :] for k, v in main_posterior.items()} # get the last posterior and imagine
+        disen_init_imagine_state = {k: v[-1, :] for k, v in disen_posterior.items()}
+        main_prior = self.main_rssm.imagine_rollout(acs[5:, :4], nonterms[5:, :4], main_init_imagine_state, T-5) # (45, 4, ...)
+        disen_prior = self.disen_rssm.imagine_rollout(acs[5:, :4], nonterms[5:, :4], disen_init_imagine_state, T-5) # (45, 4, ...)
+        main_imagine_features = self.main_rssm.get_feat(main_prior)
+        disen_imagine_features = self.disen_rssm.get_feat(disen_prior)
+        image_pred_joint, _, _, mask_pred = self.joint_obs_decoder(main_imagine_features, disen_imagine_features) 
+        joint_pred = image_pred_joint.mean # (45, 4, 3, 64, 64)
+
+        # main log
+        main_recon = image_recon_joint_main.mean # (5, 4, 3, 64, 64)
+        main_pred, _ = self.main_obs_decoder(main_imagine_features)
+        main_pred = main_pred.mean # (45, 4, 3, 64, 64)
+
+        # disen log
+        disen_recon = image_recon_joint_disen.mean # (5, 4, 3, 64, 64)
+        disen_pred, _ = self.disen_obs_decoder(disen_imagine_features)
+        disen_pred = disen_pred.mean # (45, 4, 3, 64, 64)
+
+        # disen only log
+        disen_only_recon = self.disen_only_obs_decoder(disen_observe_features).mean # (5, 4, 3, 64, 64)
+        disen_only_pred = self.disen_only_obs_decoder(disen_imagine_features).mean # (5, 4, 3, 64, 64)
+
+        # select 4 envs, do 5 frames from data, rest reconstruct from dataset
+        # so if dataset has 50 frames, 5 initial are real, 50-5 are imagined
+
+        mask_recon = mask_recon.cpu()
+        mask_pred = mask_pred.cpu()
+        joint_recon = joint_recon.cpu()
+        joint_pred = joint_pred.cpu()
+        main_recon = main_recon.cpu()
+        main_pred = main_pred.cpu()
+        disen_recon = disen_recon.cpu()
+        disen_pred = disen_pred.cpu()
+        disen_only_recon = disen_only_recon.cpu()
+        disen_only_pred = disen_only_pred.cpu()
+        truth = obs[:, :4].cpu() + 0.5 # (50, 4, 3, 64, 64)
+
+        if len(joint_recon.shape)==3: #flat
+            mask_recon = mask_recon.reshape(*mask_recon.shape[:-1],1,*self.shape[1:])
+            mask_pred = mask_pred.reshape(*mask_pred.shape[:-1],1,*self.shape[1:])
+            joint_recon = joint_recon.reshape(*joint_recon.shape[:-1],*self.shape)
+            joint_pred = joint_pred.reshape(*joint_pred.shape[:-1],*self.shape)
+            main_recon = main_recon.reshape(*main_recon.shape[:-1],*self.shape)
+            main_pred = main_pred.reshape(*main_pred.shape[:-1],*self.shape)
+            disen_recon = disen_recon.reshape(*disen_recon.shape[:-1],*self.shape)
+            disen_pred = disen_pred.reshape(*disen_pred.shape[:-1],*self.shape)
+            disen_only_recon = disen_only_recon.reshape(*disen_only_recon.shape,*self.shape)
+            disen_only_pred = disen_only_pred.reshape(*disen_only_pred.shape,*self.shape)
+            truth = truth.reshape(*truth.shape[:-1],*self.shape)
+
+
+        mask = torch.cat([mask_recon[:5, :] + 0.5, mask_pred + 0.5], 0)
+        mask = torch.cat([mask, mask, mask], dim=2)
+        joint_model = torch.cat([joint_recon[:5, :] + 0.5, joint_pred + 0.5], 0)  # time
+        joint_error = (joint_model - truth + 1) / 2
+        joint_video = torch.cat([truth, joint_model, joint_error, mask], 3)  # on H
+        main_model = torch.cat([main_recon[:5, :] + 0.5, main_pred + 0.5], 0)  # time
+        main_error = (main_model - truth + 1) / 2
+        main_video = torch.cat([truth, main_model, main_error], 3)
+        disen_model = torch.cat([disen_recon[:5, :] + 0.5, disen_pred + 0.5], 0)  # time
+        disen_error = (disen_model - truth + 1) / 2
+        disen_video = torch.cat([truth, disen_model, disen_error], 3)  # on H
+        disen_only_model = torch.cat([disen_only_recon[:5, :] + 0.5, disen_only_pred + 0.5], 0)  # time
+        disen_only_error = (disen_only_model - truth + 1) / 2
+        disen_only_video = torch.cat([truth, disen_only_model, disen_only_error], 3)  # on H
+        # T, B, C, H, W = joint_video.shape  # time, batch, height, width, channels
+        
+        return {'joint':joint_video.permute(1, 0, 2, 3, 4), 'main':main_video.permute(1, 0, 2, 3, 4), 'disen':disen_video.permute(1, 0, 2, 3, 4), 'disen_only':disen_only_video.permute(1, 0, 2, 3, 4)}
+    

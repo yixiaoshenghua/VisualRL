@@ -124,6 +124,24 @@ class RSSM(nn.Module):
 
         return priors, posteriors
 
+    def get_kl_loss(self, prior, posterior, kl_alpha, free_nats, kl_balancing):
+        prior_dist = self.get_dist(prior)
+        post_dist = self.get_dist(posterior)
+        if kl_balancing:
+            post_no_grad = self.detach_state(posterior)
+            prior_no_grad = self.detach_state(prior)
+            
+            # kl_balancing
+            kl_loss = kl_alpha * (torch.mean(distributions.kl.kl_divergence(
+                               self.get_dist(post_no_grad), prior_dist)))
+            kl_loss += (1-kl_alpha) * (torch.mean(distributions.kl.kl_divergence(
+                               post_dist, self.get_dist(prior_no_grad))))
+        else:
+            kl_loss = torch.mean(distributions.kl.kl_divergence(post_dist, prior_dist))
+            kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), free_nats))
+        return kl_loss
+
+
     def stack_states(self, states, dim=0):
         if self.discrete:
             return dict(
@@ -229,6 +247,69 @@ class ConvDecoder(nn.Module):
             distributions.Normal(mean, 1), len(self.output_shape))
 
         return out_dist
+
+class MaskConvDecoder(nn.Module):
+ 
+    def __init__(self, stoch_size, deter_size, output_shape, activation, depth=32, discrete=False):
+
+        super().__init__()
+
+        self.output_shape = output_shape # (6, size, size)
+        self.depth = depth
+        self.kernels = [5, 5, 6, 6]
+        self.act_fn = _str_to_activation[activation]
+        
+        self.dense = nn.Linear(stoch_size + deter_size, 32*self.depth) if not discrete \
+                else nn.Linear(stoch_size * discrete + deter_size, 32*self.depth)
+
+        layers = []
+        for i, kernel_size in enumerate(self.kernels):
+            in_ch = 32*self.depth if i==0 else self.depth * (2 ** (len(self.kernels)-1-i))
+            out_ch = output_shape[0] if i== len(self.kernels)-1 else self.depth * (2 ** (len(self.kernels)-2-i))
+            layers.append(nn.ConvTranspose2d(in_ch, out_ch, kernel_size, stride=2))
+            if i!=len(self.kernels)-1:
+                layers.append(self.act_fn)
+
+        self.convtranspose = nn.Sequential(*layers)
+
+    def forward(self, features):
+        out_batch_shape = features.shape[:-1] # (T, B)
+        out = self.dense(features)
+        out = torch.reshape(out, [-1, 32*self.depth, 1, 1])
+        out = self.convtranspose(out)
+        mean, mask = torch.split(out, [3, 3], dim=1)
+        mean = torch.reshape(mean, (*out_batch_shape, 3, *self.output_shape[1:])) # (T, B, 3, size, size)
+        mask = torch.reshape(mask, (*out_batch_shape, 3, *self.output_shape[1:])) # (T, B, 3, size, size)
+        
+        out_dist = distributions.independent.Independent(
+            distributions.Normal(mean, 1), len(self.output_shape))
+
+        return out_dist, mask
+
+class EnsembleMaskConvDecoder(nn.Module):
+
+    def __init__(self, decoder1, decoder2):
+        super().__init__()
+        self.decoder1 = decoder1
+        self.decoder2 = decoder2
+        self.output_shape = decoder1.output_shape # (3, size, size)
+        self.mask_conv = nn.Sequential(nn.Conv2d(6, 1, 1, stride=1),
+                                       nn.Sigmoid())
+
+    def forward(self, features1, features2):
+        pred1, mask1 = self.decoder1(features1) # (T, B, 3, size, size)
+        pred2, mask2 = self.decoder2(features2)
+        mean1 = pred1.mean
+        mean2 = pred2.mean
+        mask_feat = torch.cat([mask1, mask2], dim=2) # (T, B, 6, size, size)
+        mask_feat = torch.reshape(mask_feat, [-1, 6, *self.output_shape[1:]])
+        mask = self.mask_conv(mask_feat) # (T*B, 1, size, size)
+        mask = torch.reshape(mask, [*mask1.shape[:2], *mask.shape[1:]]) # # (T, B, 1, size, size)
+        mean = mean1 * mask + mean2 * (1 - mask)
+        out_dist = distributions.independent.Independent(
+            distributions.Normal(mean, 1), len(self.output_shape))
+        return out_dist, pred1, pred2, mask
+    
 
 # used for reward and value models
 class DenseDecoder(nn.Module):
