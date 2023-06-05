@@ -336,12 +336,13 @@ class FrameStack(gym.Wrapper):
         return np.concatenate(list(self._frames), axis=0)
 
 def get_conv_shape(convs, input_dim, device):
-    x = convs[0](torch.randn(1, *input_dim).type(torch.FloatTensor))
-    if len(convs) > 1:
-        for conv in convs[1:]:
-            x = conv(x)
-    num_features_after_cnn = np.prod(list(x.shape))
-    return num_features_after_cnn
+    with torch.no_grad():
+        x = convs[0](torch.randn(1, *input_dim).type(torch.FloatTensor))
+        if len(convs) > 1:
+            for conv in convs[1:]:
+                x = conv(x)
+        num_features_after_cnn = np.prod(list(x.shape))
+        return num_features_after_cnn
 
 def center_crop_image(image, output_size):
     h, w = image.shape[1:]
