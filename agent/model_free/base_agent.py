@@ -18,6 +18,7 @@ class AgentBase:
         self, 
         obs_shape: int, 
         action_shape: int, 
+        action_range: float, 
         device: Union[torch.device, str], 
         hidden_dim: int = 256,
         discount: float = 0.99,
@@ -37,6 +38,7 @@ class AgentBase:
         num_filters: int = 32,
         builtin_encoder: bool = True,
         ):
+        self.action_range = action_range
         self.device = device
         self.discount = discount
         self.critic_tau = critic_tau
@@ -45,11 +47,11 @@ class AgentBase:
         self.critic_target_update_freq = critic_target_update_freq
 
         self.critic = self._build_critic(obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, builtin_encoder)
+            encoder_feature_dim, num_layers, num_filters, device, builtin_encoder)
         self.critic_target = self._build_critic_target(obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, builtin_encoder)
         self.actor = self._build_actor(obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, builtin_encoder)
+            num_layers, num_filters, device, builtin_encoder)
         # build optimizer
         self.actor_optimizer = torch.optim.Adam(
             self.actor.parameters(), lr=actor_lr, betas=(actor_beta, 0.999)
@@ -60,11 +62,11 @@ class AgentBase:
 
     def _build_actor(self, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, builtin_encoder=True):
+            num_layers, num_filters, device, builtin_encoder=True):
         actor = Actor(
             obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, builtin_encoder
+            num_layers, num_filters, device, builtin_encoder
         ).to(self.device)
         
         # tie encoders between actor and critic
@@ -72,10 +74,10 @@ class AgentBase:
         return actor
 
     def _build_critic(self, obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim,    
-            num_layers, num_filters, builtin_encoder=True):
+            num_layers, num_filters, device, builtin_encoder=True):
         critic = Critic(
             obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, builtin_encoder
+            encoder_feature_dim, num_layers, num_filters, device, builtin_encoder
         ).to(self.device)
         return critic
 
@@ -101,6 +103,7 @@ class AgentBase:
             mu, _, _, _ = self.actor(
                 obs, compute_pi=False, compute_log_pi=False
             )
+            mu = mu.clamp(*self.action_range)
             return mu.cpu().data.numpy().flatten()
 
     def sample_action(self, obs):
@@ -108,6 +111,7 @@ class AgentBase:
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
             mu, pi, _, _ = self.actor(obs, compute_log_pi=False)
+            pi = pi.clamp(*self.action_range)
             return pi.cpu().data.numpy().flatten()
 
     def update_critic(self, obs, action, reward, next_obs, not_done, L, step):
@@ -197,6 +201,7 @@ class AgentSACBase(AgentBase):
         self, 
         obs_shape: int,
         action_shape: int,
+        action_range: float, 
         device: Union[torch.device, str],
         hidden_dim: int = 256,
         discount: float = 0.99,
@@ -219,7 +224,7 @@ class AgentSACBase(AgentBase):
         num_filters: int = 32,
         builtin_encoder: bool = True,
     ):
-        super().__init__(obs_shape, action_shape, device, hidden_dim, discount, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, 
+        super().__init__(obs_shape, action_shape, action_range, device, hidden_dim, discount, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, 
                                         actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, 
                                         num_layers, num_filters, builtin_encoder)
 
