@@ -46,9 +46,10 @@ class AgentDrQ(AgentSACBase):
         batch_size: int = 64,
         builtin_encoder: bool = True,
         ):
-        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
-        self.action_range = action_range
+        super().__init__(obs_shape, action_shape, action_range, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
+        self.image_size = obs_shape[-1]
         self.batch_size = batch_size
+        self.decoder = None
         self.train()
         self.critic_target.train()
 
@@ -78,18 +79,20 @@ class AgentDrQ(AgentSACBase):
     def update_critic(self, obs, obs_aug, action, reward, next_obs,
                       next_obs_aug, not_done, L, step):
         with torch.no_grad():
-            dist = self.actor(next_obs)
-            next_action = dist.rsample()
-            log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
+            _, next_action, log_prob, _ = self.actor(next_obs)
+            # dist = self.actor(next_obs)
+            # next_action = dist.rsample()
+            # log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
             target_Q1, target_Q2 = self.critic_target(next_obs, next_action)
             target_V = torch.min(target_Q1,
                                  target_Q2) - self.alpha.detach() * log_prob
             target_Q = reward + (not_done * self.discount * target_V)
 
-            dist_aug = self.actor(next_obs_aug)
-            next_action_aug = dist_aug.rsample()
-            log_prob_aug = dist_aug.log_prob(next_action_aug).sum(-1,
-                                                                  keepdim=True)
+            _, next_action_aug, log_prob_aug, _ = self.actor(next_obs)
+            # dist_aug = self.actor(next_obs_aug)
+            # next_action_aug = dist_aug.rsample()
+            # log_prob_aug = dist_aug.log_prob(next_action_aug).sum(-1,
+            #                                                       keepdim=True)
             target_Q1, target_Q2 = self.critic_target(next_obs_aug,
                                                       next_action_aug)
             target_V = torch.min(
