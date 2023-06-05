@@ -14,7 +14,7 @@ import copy
 import utils.util as util
 from logger import Logger
 from video import VideoRecorder
-from utils.replay_buffer import ReplayBuffer, ReplayBufferFLARE
+from utils.replay_buffer import CPCReplayBuffer, ReplayBufferFLARE, AugReplayBuffer
 
 from agent.model_free.sacae_agent import AgentSACAE
 from agent.model_free.flare_agent import AgentFLARE
@@ -34,6 +34,7 @@ import numpy as np
 
 from eval import make_eval
 
+#TODO: Set the environment variable of OpenGL here
 # os.environ['PYOPENGL_PLATFORM'] = 'egl'
 os.environ['MUJOCO_GL']='osmesa'
 
@@ -86,6 +87,7 @@ def parse_args():
     parser.add_argument('--encoder_feature_dim', default=50, type=int)
     parser.add_argument('--encoder_lr', default=1e-3, type=float)
     parser.add_argument('--encoder_tau', default=0.05, type=float)
+    parser.add_argument('--builtin_encoder', default=True, type=bool)
     parser.add_argument('--detach_encoder', default=False, action='store_true')
     parser.add_argument('--decoder_type', default='pixel', type=str)
     parser.add_argument('--decoder_lr', default=1e-3, type=float)
@@ -107,6 +109,7 @@ def parse_args():
     # data augs
     parser.add_argument('--data_augs', default='crop', type=str)
     parser.add_argument('--augment_target_same_rnd', default=False, action='store_true')
+    parser.add_argument('--image_pad', default=4, type=int)
     # misc
     parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--work_dir', default='.', type=str)
@@ -222,6 +225,7 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
         return AgentSACAE(
             obs_shape=obs_shape,
             action_shape=action_shape,
+            action_range=action_range,
             device=device,
             hidden_dim=args.hidden_dim,
             discount=args.discount,
@@ -422,17 +426,17 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             action_shape=action_shape, 
             action_range=action_range,
             device=device,
-            feature_dim=args.feature_dim,
+            encoder_feature_dim=args.encoder_feature_dim,
             hidden_dim=args.hidden_dim,
-            hidden_depth=args.hidden_depth,
+            #hidden_depth=args.hidden_depth,
             actor_log_std_min=args.actor_log_std_min,
             actor_log_std_max=args.actor_log_std_max,
             discount=args.discount,
             init_temperature=args.init_temperature,
             alpha_lr=args.alpha_lr,
-            actor_update_frequency=args.actor_update_freq,
+            actor_update_freq=args.actor_update_freq,
             critic_tau=args.critic_tau,
-            critic_target_update_frequency=args.critic_target_update_freq,
+            critic_target_update_freq=args.critic_target_update_freq,
             batch_size=args.batch_size,
             builtin_encoder=args.builtin_encoder,
         )
@@ -505,6 +509,7 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             kl_balancing=args.kl_balance,
             builtin_encoder=args.builtin_encoder,
         )
+    #TODO: Below are some model-based methods
     # elif args.agent == 'planet':
     #     agent = AgentPLANET()
     # elif args.agent == 'dreamer':
@@ -566,37 +571,70 @@ def main():
 
     pre_transform_image_size = args.pre_transform_image_size if 'crop' in args.data_augs else args.image_size
 
-    env = dmc2gym.make(
-        domain_name=args.domain_name,
-        task_name=args.task_name,
-        #TODO: When to use these parameters?
-        # resource_files=args.resource_files,
-        # img_source=args.img_source,
-        # total_frames=args.total_frames,
-        seed=args.seed,
-        visualize_reward=False,
-        from_pixels=(args.encoder_type == 'pixel'),
-        height=pre_transform_image_size,
-        width=pre_transform_image_size,
-        frame_skip=args.action_repeat
-    )
+    #TODO: The size of the state in DrQ is different from that of curl and others. How to fix this? Maybe the above line?
+    if args.agent.lower() == 'drq' or 'sac_ae':
+        env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            #TODO: When to use these parameters?
+            # resource_files=args.resource_files,
+            # img_source=args.img_source,
+            # total_frames=args.total_frames,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=args.image_size,
+            width=args.image_size,
+            frame_skip=args.action_repeat
+        )
+    else:
+        env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            #TODO: When to use these parameters?
+            # resource_files=args.resource_files,
+            # img_source=args.img_source,
+            # total_frames=args.total_frames,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=pre_transform_image_size,
+            width=pre_transform_image_size,
+            frame_skip=args.action_repeat
+        )
     env.seed(args.seed)
     action_range = [float(env.action_space.low.min()), float(env.action_space.high.max())]
 
-    eval_env = dmc2gym.make(
-        domain_name=args.domain_name,
-        task_name=args.task_name,
-        #TODO: When to use these parameters?
-        # resource_files=args.resource_files,
-        # img_source=args.img_source,
-        # total_frames=args.total_frames,
-        seed=args.seed,
-        visualize_reward=False,
-        from_pixels=(args.encoder_type == 'pixel'),
-        height=pre_transform_image_size,
-        width=pre_transform_image_size,
-        frame_skip=args.action_repeat
-    )
+    if args.agent.lower() == 'drq' or 'curl':
+        eval_env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            #TODO: When to use these parameters?
+            # resource_files=args.resource_files,
+            # img_source=args.img_source,
+            # total_frames=args.total_frames,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=pre_transform_image_size,
+            width=pre_transform_image_size,
+            frame_skip=args.action_repeat
+        )
+    else:
+        eval_env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            #TODO: When to use these parameters?
+            # resource_files=args.resource_files,
+            # img_source=args.img_source,
+            # total_frames=args.total_frames,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=args.image_size,
+            width=args.image_size,
+            frame_skip=args.action_repeat
+        )
 
     # stack several consecutive frames together
     if args.encoder_type == 'pixel':
@@ -605,7 +643,7 @@ def main():
 
     # make directory
     ts = time.gmtime() 
-    ts = time.strftime("%m-%d", ts)    
+    ts = time.strftime("%m-%d-%H-%M", ts)    
     env_name = args.domain_name + '-' + args.task_name
     exp_name = env_name + '-' + ts + '-im' + str(args.image_size) +'-b'  \
     + str(args.batch_size) + '-s' + str(args.seed)  + '-' + args.encoder_type
@@ -634,15 +672,7 @@ def main():
     else:
         obs_shape = env.observation_space.shape
         pre_aug_obs_shape = obs_shape
-
-    replay_buffer = ReplayBuffer(
-        obs_shape=pre_aug_obs_shape,
-        action_shape=env.action_space.shape,
-        capacity=args.replay_buffer_capacity,
-        batch_size=args.batch_size,
-        device=device
-    )
-
+    
     agent = make_agent(
         obs_shape=obs_shape,
         action_shape=env.action_space.shape,
@@ -650,6 +680,31 @@ def main():
         device=device, 
         action_range=action_range
     )
+
+    if 'CURL' in agent.__class__.__name__:
+        replay_buffer = CPCReplayBuffer(
+            obs_shape=pre_aug_obs_shape,
+            action_shape=env.action_space.shape,
+            capacity=args.replay_buffer_capacity,
+            batch_size=args.batch_size,
+            device=device
+        )
+    elif 'SACAE' in agent.__class__.__name__:
+        replay_buffer = CPCReplayBuffer(
+            obs_shape=obs_shape,
+            action_shape=env.action_space.shape,
+            capacity=args.replay_buffer_capacity,
+            batch_size=args.batch_size,
+            device=device
+        )
+    elif 'DrQ' in agent.__class__.__name__:
+        replay_buffer = AugReplayBuffer(
+            obs_shape=obs_shape,
+            action_shape=env.action_space.shape,
+            capacity=args.replay_buffer_capacity,
+            image_pad=args.image_pad,
+            device=device
+        )
 
     L = Logger(args.work_dir, use_tb=args.save_tb)
 
@@ -707,7 +762,10 @@ def main():
         episode_reward += reward
 
         #TODO: Some replay buffer needs parameters like this: (obs, action, reward, next_obs, *done,* done_bool)
-        replay_buffer.add(obs, action, reward, next_obs, done_bool)
+        if 'CURL' or 'SACAE' in agent.__class__.__name__:
+            replay_buffer.add(obs, action, reward, next_obs, done_bool)
+        elif 'DrQ' in agent.__class__.__name__:
+            replay_buffer.add(obs, action, reward, next_obs, done, done_bool)
         
         # CURL doesn't need this
         # np.copyto(replay_buffer.k_obses[replay_buffer.idx - args.k], next_obs)
