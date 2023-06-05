@@ -99,10 +99,9 @@ class AgentCURL(AgentSACBase):
         num_layers: int = 4,
         num_filters: int = 32
     ):
-        super().__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, 
+        super().__init__(obs_shape, action_shape, action_range, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, 
                                            actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
                                            encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters)
-        self.action_range = action_range
         self.cpc_update_freq = cpc_update_freq
         self.log_interval = log_interval
         self.image_size = obs_shape[-1]
