@@ -6,7 +6,7 @@ import time
 import numpy as np
 
 def make_eval(type):
-    if 'rad' in type or 'curl' in type:
+    if 'rad' or 'curl' or 'drq' in type:
         type = 'rad'
     else:
         type = 'bisim'
