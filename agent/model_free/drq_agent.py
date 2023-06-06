@@ -44,7 +44,7 @@ class AgentDrQ(AgentSACBase):
         num_filters: int = 32,
         detach_encoder: bool = False,
         batch_size: int = 64,
-        builtin_encoder: bool = True,
+        builtin_encoder: bool = True
         ):
         super().__init__(obs_shape, action_shape, action_range, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
         self.image_size = obs_shape[-1]
