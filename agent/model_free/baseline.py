@@ -37,7 +37,6 @@ class BaselineAgent(object):
         critic_tau=0.005,
         critic_target_update_freq=2,
         encoder_type='pixel',
-        encoder_stride=2,
         encoder_feature_dim=50,
         encoder_lr=1e-3,
         encoder_tau=0.005,
@@ -63,17 +62,17 @@ class BaselineAgent(object):
         self.actor = Actor(
             obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, encoder_stride
+            num_layers, num_filters
         ).to(device)
 
         self.critic = Critic(
             obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, encoder_stride
+            encoder_feature_dim, num_layers, num_filters
         ).to(device)
 
         self.critic_target = Critic(
             obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, encoder_stride
+            encoder_feature_dim, num_layers, num_filters
         ).to(device)
 
         self.critic_target.load_state_dict(self.critic.state_dict())
