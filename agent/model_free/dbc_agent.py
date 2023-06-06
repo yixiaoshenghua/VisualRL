@@ -22,6 +22,7 @@ class AgentDBC(AgentSACBase):
         self, 
         obs_shape: int,
         action_shape: int,
+        action_range: float,
         transition_model_type,
         device: Union[torch.device, str],
         hidden_dim: int = 256,
@@ -48,9 +49,10 @@ class AgentDBC(AgentSACBase):
         decoder_weight_lambda: float = 0.0,
         num_layers: int = 4,
         num_filters: int = 32,
-        bisim_coef: float = 0.5
+        bisim_coef: float = 0.5,
+        builtin_encoder: bool = True
     ):
-        super(AgentSACBase, self).__init__(obs_shape, action_shape, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters)
+        super().__init__(obs_shape, action_shape, action_range, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
 
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
@@ -167,7 +169,9 @@ class AgentDBC(AgentSACBase):
         return total_loss
 
     def update(self, replay_buffer, L, step):
-        obs, action, _, reward, next_obs, not_done = replay_buffer.sample()
+        # There is a current reward in original DBC repo
+        # obs, action, _, reward, next_obs, not_done = replay_buffer.sample()
+        obs, action, reward, next_obs, not_done = replay_buffer.sample()
 
         L.log('train/batch_reward', reward.mean(), step)
 
