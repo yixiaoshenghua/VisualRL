@@ -12,8 +12,8 @@ import dmc2gym
 import copy
 
 import utils.util as util
-from logger import Logger
-from video import VideoRecorder
+from utils.logger import Logger
+from utils.video import VideoRecorder
 from utils.replay_buffer import CPCReplayBuffer, ReplayBufferFLARE, AugReplayBuffer
 
 from agent.model_free.sacae_agent import AgentSACAE

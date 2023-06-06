@@ -129,3 +129,35 @@ def evaluate_rad(env, agent, video, num_episodes, L, step, args):
     run_eval_loop(sample_stochastically=False)
     L.dump(step)
 
+def evaluate_dreamer(env, agent, video, num_episodes, L, step, device=None, embed_viz_dir=None, args=None):
+    # TODO: 与AgentDreamer.video_pred相协调
+    obses = []
+    values = []
+    embeddings = []
+
+    for i in range(num_episodes):
+        obs = env.reset()
+        agent.reset()
+        if video is not None:
+            video.init(enabled=(i == 0))
+        done = False
+        episode_reward = 0
+        while not done:
+            with util.eval_mode(agent):
+                action = agent.select_action(obs)
+
+            if embed_viz_dir:
+                obses.append(obs)
+                with torch.no_grad():
+                    values.append(min(agent.critic(torch.Tensor(obs).to(device).unsqueeze(0), torch.Tensor(action).to(device).unsqueeze(0))).item())
+                    embeddings.append(agent.critic.encoder(torch.Tensor(obs).unsqueeze(0).to(device)).cpu().detach().numpy())
+
+            obs, reward, done, _ = env.step(action)
+            if video is not None:
+                video.record(env)
+            episode_reward += reward
+
+        if video is not None:
+            video.save('%d.mp4' % step)
+        L.log('eval/episode_reward', episode_reward, step)
+    L.dump(step)

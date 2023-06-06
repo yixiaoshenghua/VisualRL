@@ -119,6 +119,41 @@ class AgentDreamer:
         if restore:
             self.restore_checkpoint(self.restore_path)
 
+    def reset(self):
+        self.prev_state = self.rssm.init_state(1, self.device)
+        self.prev_action = torch.zeros(1, self.action_size).to(self.device)
+
+    def select_action(self, obs):
+        obs = obs['image']
+        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.obs_encoder(preprocess_obs(obs))
+        _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+        features = self.rssm.get_feat(posterior)
+        action = self.actor(features, deter = not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
+
+        self.prev_state = posterior
+        self.prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
+
+        return action
+    
+    def sample_action(self, obs, explore=True):
+        obs = obs['image']
+        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.obs_encoder(preprocess_obs(obs))
+        _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+        features = self.rssm.get_feat(posterior)
+        action = self.actor(features, deter = not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
+
+        self.prev_state = posterior
+        self.prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
+
+        return action
+
+    '''
     # def actor_loss(self):
 
     #     with torch.no_grad():
@@ -161,6 +196,7 @@ class AgentDreamer:
     #     objective += ent_scale * action_entropy[:-1]
     #     actor_loss = -(weight * objective).mean()
     #     return actor_loss
+    '''
 
     def actor_loss(self):
 
@@ -184,8 +220,8 @@ class AgentDreamer:
             else:
                 discounts = self.args.discount * torch.ones_like(imag_rews).detach()
 
-        self.returns = compute_return(imag_rews[:-1], imag_vals[:-1],discounts[:-1] \
-                                         ,self.args.td_lambda, imag_vals[-1])
+        self.returns = compute_return(imag_rews[:-1], imag_vals[:-1],discounts[:-1], \
+                                         self.args.td_lambda, imag_vals[-1])
 
         discounts = torch.cat([torch.ones_like(discounts[:1]), discounts[1:-1]], 0)
         self.discounts = torch.cumprod(discounts, 0).detach()
@@ -318,9 +354,8 @@ class AgentDreamer:
                     d.data = mix * s.data + (1 - mix) * d.data
             self._updates += 1
 
-    def update(self):
-
-        obs, acs, rews, terms = self.data_buffer.sample()
+    def update(self, replay_buffer):
+        obs, acs, rews, terms = replay_buffer.sample_dreamer()
         obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
         acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
         rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
@@ -331,6 +366,11 @@ class AgentDreamer:
         value_loss = self.update_critic()
         self.update_slow_target()
 
+        loss_dict = {}
+        loss_dict['model_loss'] = model_loss.item()
+        loss_dict['actor_loss'] = actor_loss.item()
+        loss_dict['value_loss'] = value_loss.item()
+        return loss_dict
         return model_loss.item(), actor_loss.item(), value_loss.item()
 
     def act_with_world_model(self, obs, prev_state, prev_action, explore=False):

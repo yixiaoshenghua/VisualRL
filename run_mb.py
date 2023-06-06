@@ -5,25 +5,21 @@ import argparse
 import numpy as np
 import json
 import torch
-from logger import MBLogger
-from collections import OrderedDict
 
-from dmc2gym.dmc2gym.wrappers import *
+from collections import OrderedDict
+from dmc2gym.dmc2gym import wrappers
+
+from utils.logger import MBLogger
+from utils.video import VideoRecorder
+
 from agent.model_based.dreamer_agent import AgentDreamer
-from utils import *
+from agent.model_based.tia_agent import AgentTIA
+
+from eval import make_eval
 
 os.environ['MUJOCO_GL'] = 'glfw' # glfw, egl, osmesa
 
-def make_env(args):
-
-    env = DeepMindControl(args.env, args.seed)
-    env = ActionRepeat(env, args.action_repeat)
-    env = NormalizeActions(env)
-    env = TimeLimit(env, args.time_limit / args.action_repeat)
-    #env = env_wrapper.RewardObs(env)
-    return env
-
-def get_args():
+def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--env', type=str, default='walker-walk', help='Control Suite environment')
@@ -100,46 +96,146 @@ def get_args():
     
     return args
 
+def make_env(args):
+    env = wrappers.DeepMindControl(args.env, args.seed)
+    env = wrappers.ActionRepeat(env, args.action_repeat)
+    env = wrappers.NormalizeActions(env)
+    env = wrappers.TimeLimit(env, args.time_limit / args.action_repeat)
+    #env = env_wrapper.RewardObs(env)
+    return env
+
+def make_log(args):
+    return None
+
+def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
+    if args.algo == 'Dreamerv1':
+        agent = AgentDreamer(args, obs_shape, action_shape, device, args.restore)
+    elif args.algo == 'TIA':
+        agent = AgentTIA(args, obs_shape, action_shape, device, args.restore)
+    return agent
 
 def main():
     
     # -------------------------------- global settings -------------------------------------
-    args = get_args()
-    data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')
+    args = parse_args()
 
-    if not (os.path.exists(data_path)):
-        os.makedirs(data_path)
+    # make logdir
+    logdir_root = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')
+    os.makedirs(logdir_root, exist_ok=True)
+    logdir = os.path.join(logdir_root, args.env, args.algo, args.exp_name + '_' + time.strftime("%d-%m-%Y-%H-%M-%S"))
+    os.makedirs(logdir, exist_ok=False)
 
-    logdir = args.env + '/' + args.algo + '/' + args.exp_name + '_' + time.strftime("%d-%m-%Y-%H-%M-%S")
-    logdir = os.path.join(data_path, logdir)
-    if not(os.path.exists(logdir)):
-        os.makedirs(logdir)
-
+    # set seed
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-
+    
+    # set device
     if torch.cuda.is_available() and args.gpu != -1:
         device = torch.device('cuda:{}'.format(args.gpu))
         torch.cuda.manual_seed(args.seed)
     else:
         device = torch.device('cpu')
 
+    # make train and eval env
     train_env = make_env(args)
     test_env  = make_env(args)
     obs_shape = train_env.observation_space['image'].shape
-    action_size = train_env.action_space.shape[0]
-    dreamer = AgentDreamer(args, obs_shape, action_size, device, args.restore)
+    action_shape = train_env.action_space.shape[0]
+    # make evaluation function
+    evaluate = make_eval(args.agent)
 
-    logger = MBLogger(logdir)
+    # make agent
+    agent = make_agent(obs_shape, action_shape, args, device, train_env.action_space.high)
+    # make replay buffer
+    replay_buffer = MBReplayBuffer(args.buffer_size, obs_shape, action_shape, image_channel=3, device=device)
+
+    # make logger
+    L = MBLogger(logdir)
+    # make video recorder
+    video = VideoRecorder(logdir if args.save_video else None)
+    # save args
     with open(os.path.join(logdir, 'args.json'), 'w') as f:
         json.dump(vars(args), f, sort_keys=True, indent=4)
 
     # ---------------------------------- start training ----------------------------------------
     if args.train:
+        env = train_env
+        obs = env.reset()
+        agent.reset()
+        done = False
+        seed_episode_rews = [0.0]
+        start_time = time.time()
+        episode, episode_reward, done = 0, 0, False
+        for step in range(args.total_steps):
+            if done:
+                # log time
+                L.log_scalar('train/duration', time.time() - start_time, step)
+                start_time = time.time()
+
+                # evaluate agent periodically
+                if step % args.eval_freq == 0:
+                    L.log('eval/episode', episode, step)
+                    evaluate(env, agent, video, args.num_eval_episodes, L, step, args=args)
+                    if args.save_model:
+                        agent.save(os.path.join(logdir, 'models{}.pt'.format(step)))
+                    # if args.save_buffer:
+                    #     replay_buffer.save(buffer_dir)
+
+                L.log_scalar('train/episode_reward', episode_reward, step)
+
+                obs = env.reset()
+                agent.reset()
+                done = False
+                episode_reward = 0
+                episode_step = 0
+                episode += 1
+                reward = 0
+
+                L.log_scalar('train/episode', episode, step)
+
+            # sample action for data collection
+            if step < args.seed_steps:
+                action = env.action_space.sample()
+            else:
+                with util.eval_mode(agent):
+                    action = agent.sample_action(obs)
+
+            # run training update
+            if step >= args.init_steps:
+                num_updates = args.init_steps if step == args.init_steps else 1
+                for _ in range(num_updates):
+                    loss_dict = agent.update(replay_buffer)
+                
+                L.update({
+                    **loss_dict,
+                    'train_avg_reward': np.mean(train_rews),
+                    'train_max_reward': np.max(train_rews),
+                    'train_min_reward': np.min(train_rews),
+                    'train_std_reward': np.std(train_rews),
+                })
+            
+            next_obs, reward, done, _ = env.step(action)
+
+            # allow infinit bootstrap
+            done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(
+                done
+            )
+            episode_reward += reward
+
+            replay_buffer.add(obs, action, reward, next_obs, done_bool)
+
+            obs = next_obs
+            episode_step += 1
+
+    elif args.evaluate:
+        evaluate(test_env, agent, video, args.num_eval_episodes, L, step, args=args)
+
+    # original implementation
+    if args.train:
         initial_logs = OrderedDict()
-        seed_episode_rews = dreamer.collect_random_episodes(train_env, args.seed_steps//args.action_repeat)
-        global_step = dreamer.data_buffer.steps * args.action_repeat
+        seed_episode_rews = agent.collect_random_episodes(train_env, args.seed_steps//args.action_repeat)
+        global_step = agent.data_buffer.steps * args.action_repeat
 
         # without loss of generality intial rews for both train and eval are assumed same
         initial_logs.update({
@@ -153,8 +249,8 @@ def main():
             'eval_std_reward':np.std(seed_episode_rews),
             })
 
-        logger.log_scalars(initial_logs, step=0)
-        logger.flush()
+        L.log_scalars(initial_logs, step=0)
+        L.flush()
 
         while global_step <= args.total_steps:
 
@@ -164,9 +260,9 @@ def main():
             logs = OrderedDict()
 
             for _ in range(args.update_steps):
-                model_loss, actor_loss, value_loss = dreamer.update()
+                model_loss, actor_loss, value_loss = agent.update()
     
-            train_rews = dreamer.act_and_collect_data(train_env, args.collect_steps//args.action_repeat)
+            train_rews = agent.act_and_collect_data(train_env, args.collect_steps//args.action_repeat)
 
             # --------------------------------- test and log ------------------------------------------
             logs.update({
@@ -180,7 +276,7 @@ def main():
             })
 
             if global_step % args.test_interval == 0:
-                episode_rews, video_images = dreamer.evaluate(test_env, args.test_episodes)
+                episode_rews, video_images = agent.evaluate(test_env, args.test_episodes)
 
                 logs.update({
                     'eval_avg_reward':np.mean(episode_rews),
@@ -189,24 +285,24 @@ def main():
                     'eval_std_reward':np.std(episode_rews),
                 })
             
-            logger.log_scalars(logs, global_step)
+            L.log_scalars(logs, global_step)
 
             if global_step % args.log_video_freq ==0 and args.log_video_freq != -1 and len(video_images[0])!=0:
-                logger.log_video(video_images, global_step, args.max_videos_to_save)
+                L.log_video(video_images, global_step, args.max_videos_to_save)
 
             if global_step % args.checkpoint_interval == 0:
                 ckpt_dir = os.path.join(logdir, 'ckpts/')
                 if not (os.path.exists(ckpt_dir)):
                     os.makedirs(ckpt_dir)
-                dreamer.save(os.path.join(ckpt_dir,  f'{global_step}_ckpt.pt'))
+                agent.save(os.path.join(ckpt_dir,  f'{global_step}_ckpt.pt'))
 
-            global_step = dreamer.data_buffer.steps * args.action_repeat
-            dreamer.set_step(global_step)
-            logger.flush()
+            global_step = agent.data_buffer.steps * args.action_repeat
+            agent.set_step(global_step)
+            L.flush()
 
     elif args.evaluate:
         logs = OrderedDict()
-        episode_rews, video_images = dreamer.evaluate(test_env, args.test_episodes, render=True)
+        episode_rews, video_images = agent.evaluate(test_env, args.test_episodes, render=True)
 
         logs.update({
             'test_avg_reward':np.mean(episode_rews),
@@ -215,8 +311,8 @@ def main():
             'test_std_reward':np.std(episode_rews),
         })
 
-        logger.dump_scalars_to_pickle(logs, 0, log_title='test_scalars.pkl')
-        logger.log_videos(video_images, 0, max_videos_to_save=args.max_videos_to_save)
+        L.dump_scalars_to_pickle(logs, 0, log_title='test_scalars.pkl')
+        L.log_videos(video_images, 0, max_videos_to_save=args.max_videos_to_save)
 
 if __name__ == '__main__':
     main()
