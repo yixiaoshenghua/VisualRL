@@ -87,6 +87,7 @@ def parse_args():
     parser.add_argument('--encoder_feature_dim', default=50, type=int)
     parser.add_argument('--encoder_lr', default=1e-3, type=float)
     parser.add_argument('--encoder_tau', default=0.05, type=float)
+    parser.add_argument('--encoder_stride', default=1, type=int)
     parser.add_argument('--builtin_encoder', default=True, type=bool)
     parser.add_argument('--detach_encoder', default=False, action='store_true')
     parser.add_argument('--decoder_type', default='pixel', type=str)
@@ -357,6 +358,7 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
         agent = AgentDBC(
             obs_shape=obs_shape,
             action_shape=action_shape,
+            action_range=action_range,
             device=device,
             hidden_dim=args.hidden_dim,
             discount=args.discount,
@@ -376,8 +378,6 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             encoder_feature_dim=args.encoder_feature_dim,
             encoder_lr=args.encoder_lr,
             encoder_tau=args.encoder_tau,
-            encoder_stride=args.encoder_stride,
-            decoder_type=args.decoder_type,
             decoder_lr=args.decoder_lr,
             decoder_update_freq=args.decoder_update_freq,
             decoder_weight_lambda=args.decoder_weight_lambda,
@@ -572,7 +572,7 @@ def main():
     pre_transform_image_size = args.pre_transform_image_size if 'crop' in args.data_augs else args.image_size
 
     #TODO: The size of the state in DrQ is different from that of curl and others. How to fix this? Maybe the above line?
-    if args.agent.lower() == 'drq' or 'sac_ae':
+    if args.agent.lower() == 'drq' or args.agent.lower() == 'sac_ae' or args.agent.lower() == 'dbc':
         env = dmc2gym.make(
             domain_name=args.domain_name,
             task_name=args.task_name,
@@ -605,7 +605,7 @@ def main():
     env.seed(args.seed)
     action_range = [float(env.action_space.low.min()), float(env.action_space.high.max())]
 
-    if args.agent.lower() == 'drq' or 'curl':
+    if args.agent.lower() == 'drq' or args.agent.lower() == 'curl':
         eval_env = dmc2gym.make(
             domain_name=args.domain_name,
             task_name=args.task_name,
@@ -645,8 +645,8 @@ def main():
     ts = time.gmtime() 
     ts = time.strftime("%m-%d-%H-%M", ts)    
     env_name = args.domain_name + '-' + args.task_name
-    exp_name = env_name + '-' + ts + '-im' + str(args.image_size) +'-b'  \
-    + str(args.batch_size) + '-s' + str(args.seed)  + '-' + args.encoder_type
+    exp_name = args.agent + '-' + env_name + '-s' + str(args.seed)  + '-' + ts + '-im' + str(args.image_size) +'-b'  \
+    + str(args.batch_size) + '-' + args.encoder_type
     args.work_dir = args.work_dir + '/'  + exp_name
 
     util.make_dir(args.work_dir)
@@ -689,7 +689,7 @@ def main():
             batch_size=args.batch_size,
             device=device
         )
-    elif 'SACAE' in agent.__class__.__name__:
+    elif 'SACAE' in agent.__class__.__name__ or 'DBC' in agent.__class__.__name__:
         replay_buffer = CPCReplayBuffer(
             obs_shape=obs_shape,
             action_shape=env.action_space.shape,
@@ -762,7 +762,7 @@ def main():
         episode_reward += reward
 
         #TODO: Some replay buffer needs parameters like this: (obs, action, reward, next_obs, *done,* done_bool)
-        if 'CURL' or 'SACAE' in agent.__class__.__name__:
+        if args.agent.lower() == 'curl' or args.agent.lower() == 'sac_ae' or args.agent.lower() == 'dbc':
             replay_buffer.add(obs, action, reward, next_obs, done_bool)
         elif 'DrQ' in agent.__class__.__name__:
             replay_buffer.add(obs, action, reward, next_obs, done, done_bool)
