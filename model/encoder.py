@@ -5,6 +5,8 @@ from model.recurrent_state_space_model import RSSMState, RSSMRepresentation, RSS
     RSSMRollout, ObservationEncoder, CarlaObservationEncoder
 import utils.pytorch_util as ptu
 from utils.util import get_conv_shape
+from .vit import vit_toy_patch6_84
+
 
 def tie_weights(src, trg):
     assert type(src) == type(trg)
@@ -390,8 +392,79 @@ class RSSMCarlaEncoder(nn.Module):
             if len(v.shape) > 2:
                 L.log_image('train_encoder/%s_img' % k, v[0], step)
 
+class ViTEncoder(nn.Module):
+    def __init__(self, obs_shape, feature_dim, num_layers=2, num_filters=32, output_logits=False):
+        super().__init__()
+        self.num_step=int(obs_shape[0]/3)
+        self.feature_dim = feature_dim
+        self.outputs = dict()
+        self.image_encode = vit_toy_patch6_84()
+        self.linear_map = nn.Linear(192, 50)
+        self.byol_project = nn.Sequential(
+            nn.Linear(192, 384),
+            nn.BatchNorm1d(384),
+            nn.ReLU(),
+            nn.Linear(384, 96),
+            nn.BatchNorm1d(96),
+        )
+        self.byol_predict = nn.Sequential(
+            nn.Linear(96, 384),
+            nn.BatchNorm1d(384),
+            nn.ReLU(),
+            nn.Linear(384, 96),
+        )
+        # self.build_decoder()
+
+    def set_reuse(self):
+        self.image_encode.copy_token()
+    
+    def forward(self, obs, detach=False):
+        #import pdb
+        #pdb.set_trace()
+        self.outputs['obs'] = obs
+        latent = self.image_encode.forward_features1(obs)
+        self.outputs['vit'] = latent
+        #latent = self.image_encode.forward_features2(img_sequence)
+        #latent = self.image_encode.forward_features3(img_sequence)
+
+        out = self.linear_map(latent)
+        self.outputs['linear'] = out
+        if detach:
+            out=out.detach()
+
+        return out
+    
+    def get_rec(self, input):
+        result = self.decoder_input(input)
+        result = result.view(-1, 512, 2, 2)
+        result = self.decoder(result)
+        result = self.final_layer(result)
+        return result
+    
+    def forward_rec(self,img_sequence):
+
+        rec = self.image_encode.forward_reconstruction(img_sequence)
+        # rec = self.get_rec(rec)
+        return rec
+    
+    def copy_conv_weights_from(self, source):
+        """Tie convolutional layers"""
+        pass
+    
+    def log(self, L, step, log_freq):
+        if step % log_freq != 0:
+            return
+
+        for k, v in self.outputs.items():
+            L.log_histogram('train_encoder/%s_hist' % k, v, step)
+            if len(v.shape) > 2:
+                L.log_image('train_encoder/%s_img' % k, v[0], step)
+
+        L.log_param('train_encoder/vit', self.image_encode, step)
+        L.log_param('train_encoder/linear', self.linear_map, step)
+
 _AVAILABLE_ENCODERS = {'pixel': PixelEncoder, 'identity': IdentityEncoder, 'rssm': RSSMEncoder,
-    'carla_rssm': RSSMCarlaEncoder,}
+    'carla_rssm': RSSMCarlaEncoder, 'vit': ViTEncoder}
 
 
 def make_encoder(
