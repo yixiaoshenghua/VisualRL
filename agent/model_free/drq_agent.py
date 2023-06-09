@@ -111,26 +111,33 @@ class AgentDrQ(AgentSACBase):
         critic_loss += F.mse_loss(Q1_aug, target_Q) + F.mse_loss(
             Q2_aug, target_Q)
 
-        L.log('train_critic/loss', critic_loss, step)
-
         # Optimize the critic
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
 
         self.critic.log(L, step)
+        return critic_loss.item()
 
     def update(self, replay_buffer, L, step):
         obs, action, reward, next_obs, not_done, obs_aug, next_obs_aug = replay_buffer.sample_aug(
             self.batch_size)
+        
+        loss_dict = {}
 
-        L.log('train/batch_reward', reward.mean(), step)
+        loss_dict['train/batch_reward'] = reward.mean()
 
-        self.update_critic(obs, obs_aug, action, reward, next_obs,
-                           next_obs_aug, not_done, L, step)
+        critic_loss = self.update_critic(obs, obs_aug, action, reward, next_obs,
+                                         next_obs_aug, not_done, L, step)
+        loss_dict['train_critic/loss'] = critic_loss
 
         if step % self.actor_update_freq == 0:
-            self.update_actor_and_alpha(obs, L, step)
+            actor_loss, target_entropy, entropy, alpha_loss, alpha = self.update_actor_and_alpha(obs, step)
+            loss_dict['train_actor/loss'] = actor_loss
+            loss_dict['train_actor/target_entropy'] = target_entropy
+            loss_dict['train_actor/entropy'] = entropy
+            loss_dict['train_alpha/loss'] = alpha_loss
+            loss_dict['train_alpha/value'] = alpha
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(self.critic, self.critic_target,

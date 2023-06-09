@@ -127,10 +127,6 @@ class Logger(object):
             frames = frames.unsqueeze(0)
             self._sw.add_video(key, frames, step, fps=30)
 
-    def _try_sw_log_histogram(self, key, histogram, step):
-        if self._sw is not None:
-            self._sw.add_histogram(key, histogram, step)
-
     def log(self, key, value, step, n=1):
         assert key.startswith('train') or key.startswith('eval')
         if type(value) == torch.Tensor:
@@ -139,15 +135,6 @@ class Logger(object):
         mg = self._train_mg if key.startswith('train') else self._eval_mg
         mg.log(key, value, n)
 
-    def log_param(self, key, param, step):
-        self.log_histogram(key + '_w', param.weight.data, step)
-        if hasattr(param.weight, 'grad') and param.weight.grad is not None:
-            self.log_histogram(key + '_w_g', param.weight.grad.data, step)
-        if hasattr(param, 'bias'):
-            self.log_histogram(key + '_b', param.bias.data, step)
-            if hasattr(param.bias, 'grad') and param.bias.grad is not None:
-                self.log_histogram(key + '_b_g', param.bias.grad.data, step)
-
     def log_image(self, key, image, step):
         assert key.startswith('train') or key.startswith('eval')
         self._try_sw_log_image(key, image, step)
@@ -155,10 +142,6 @@ class Logger(object):
     def log_video(self, key, frames, step):
         assert key.startswith('train') or key.startswith('eval')
         self._try_sw_log_video(key, frames, step)
-
-    def log_histogram(self, key, histogram, step):
-        assert key.startswith('train') or key.startswith('eval')
-        self._try_sw_log_histogram(key, histogram, step)
 
     def dump(self, step):
         self._train_mg.dump(step, 'train')

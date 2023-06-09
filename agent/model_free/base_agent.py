@@ -126,7 +126,6 @@ class AgentBase:
         current_Q1, current_Q2 = self.critic(obs, action)
         critic_loss = F.mse_loss(current_Q1,
                                  target_Q) + F.mse_loss(current_Q2, target_Q)
-        L.log('train_critic/loss', critic_loss, step)
 
 
         # Optimize the critic
@@ -135,6 +134,7 @@ class AgentBase:
         self.critic_optimizer.step()
 
         self.critic.log(L, step)
+        return critic_loss.item()
 
     def update_actor(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
@@ -144,28 +144,31 @@ class AgentBase:
         actor_Q = torch.min(actor_Q1, actor_Q2)
         actor_loss = (self.alpha.detach() * log_pi - actor_Q).mean()
 
-        L.log('train_actor/loss', actor_loss, step)
-        L.log('train_actor/target_entropy', self.target_entropy, step)
         entropy = 0.5 * log_std.shape[1] * (1.0 + np.log(2 * np.pi)
                                             ) + log_std.sum(dim=-1)
-        L.log('train_actor/entropy', entropy.mean(), step)
 
         # optimize the actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
 
-        self.actor.log(L, step)
+        return actor_loss.item(), self.target_entropy.item(), entropy.mean().item()
 
     def update(self, replay_buffer, L, step):
         obs, action, reward, next_obs, not_done = replay_buffer.sample()
 
-        L.log('train/batch_reward', reward.mean(), step)
+        loss_dict={}
 
-        self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        loss_dict['train/batch_reward'] = reward.mean()
+
+        critic_loss = self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        loss_dict['train_critic/loss'] = critic_loss
 
         if step % self.actor_update_freq == 0:
-            self.update_actor(obs, L, step)
+            actor_loss, target_entropy, entropy = self.update_actor(obs, step)
+            loss_dict['train_actor/loss'] = actor_loss
+            loss_dict['train_actor/target_entropy'] = target_entropy
+            loss_dict['train_actor/entropy'] = entropy
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(
@@ -178,6 +181,8 @@ class AgentBase:
                 self.critic.encoder, self.critic_target.encoder,
                 self.encoder_tau
             )
+
+        return loss_dict
 
     def save(self, model_dir, step):
         torch.save(
@@ -249,7 +254,7 @@ class AgentSACBase(AgentBase):
     def alpha(self):
         return self.log_alpha.exp()
 
-    def update_actor_and_alpha(self, obs, L, step):
+    def update_actor_and_alpha(self, obs, step):
         # detach encoder, so we don't update it with the actor loss
         _, pi, log_pi, log_std = self.actor(obs, detach_encoder=True)
         actor_Q1, actor_Q2 = self.critic(obs, pi, detach_encoder=True)
@@ -257,36 +262,38 @@ class AgentSACBase(AgentBase):
         actor_Q = torch.min(actor_Q1, actor_Q2)
         actor_loss = (self.alpha.detach() * log_pi - actor_Q).mean()
 
-        L.log('train_actor/loss', actor_loss, step)
-        L.log('train_actor/target_entropy', self.target_entropy, step)
         entropy = 0.5 * log_std.shape[1] * (1.0 + np.log(2 * np.pi)
                                             ) + log_std.sum(dim=-1)
-        L.log('train_actor/entropy', entropy.mean(), step)
 
         # optimize the actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
 
-        self.actor.log(L, step)
-
         self.log_alpha_optimizer.zero_grad()
         alpha_loss = (self.alpha *
                       (-log_pi - self.target_entropy).detach()).mean()
-        L.log('train_alpha/loss', alpha_loss, step)
-        L.log('train_alpha/value', self.alpha, step)
         alpha_loss.backward()
         self.log_alpha_optimizer.step()
+        return actor_loss.item(), self.target_entropy.item(), entropy.mean().item(), alpha_loss.item(), self.alpha.item()
 
     def update(self, replay_buffer, L, step):
         obs, action, reward, next_obs, not_done = replay_buffer.sample()
 
-        L.log('train/batch_reward', reward.mean(), step)
+        loss_dict = {}
 
-        self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        loss_dict['train/batch_reward'] = reward.mean()
+
+        critic_loss = self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        loss_dict['train_critic/loss'] = critic_loss
 
         if step % self.actor_update_freq == 0:
-            self.update_actor_and_alpha(obs, L, step)
+            actor_loss, target_entropy, entropy, alpha_loss, alpha = self.update_actor_and_alpha(obs, step)
+            loss_dict['train_actor/loss'] = actor_loss
+            loss_dict['train_actor/target_entropy'] = target_entropy
+            loss_dict['train_actor/entropy'] = entropy
+            loss_dict['train_alpha/loss'] = alpha_loss
+            loss_dict['train_alpha/value'] = alpha
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(

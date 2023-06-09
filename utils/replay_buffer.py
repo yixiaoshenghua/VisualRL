@@ -85,13 +85,13 @@ class CPCReplayBuffer(Dataset):
         self.full = False
         self._path_len = path_len
 
-    def add(self, obs, action, reward, next_obs, done):
+    def add(self, obs, action, reward, next_obs, done, done_bool):
 
         np.copyto(self.obses[self.idx], obs)
         np.copyto(self.actions[self.idx], action)
         np.copyto(self.rewards[self.idx], reward)
         np.copyto(self.next_obses[self.idx], next_obs)
-        np.copyto(self.not_dones[self.idx], not done)
+        np.copyto(self.not_dones[self.idx], not done_bool)
 
         self.idx = (self.idx + 1) % self.capacity
         self.full = self.full or self.idx == 0

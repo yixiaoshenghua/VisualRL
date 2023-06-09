@@ -188,8 +188,6 @@ class AgentCURL(AgentSACBase):
             obs, action, detach_encoder=self.detach_encoder)
         critic_loss = F.mse_loss(current_Q1,
                                  target_Q) + F.mse_loss(current_Q2, target_Q)
-        if step % self.log_interval == 0:
-            L.log('train_critic/loss', critic_loss, step)
 
 
         # Optimize the critic
@@ -198,8 +196,12 @@ class AgentCURL(AgentSACBase):
         self.critic_optimizer.step()
 
         self.critic.log(L, step)
+        if step % self.log_interval == 0:
+            return critic_loss.item()
+        else:
+            return None
 
-    def update_cpc(self, obs_anchor, obs_pos, cpc_kwargs, L, step):
+    def update_cpc(self, obs_anchor, obs_pos, cpc_kwargs, step):
         
         # time flips 
         """
@@ -222,7 +224,9 @@ class AgentCURL(AgentSACBase):
         self.encoder_optimizer.step()
         self.cpc_optimizer.step()
         if step % self.log_interval == 0:
-            L.log('train/curl_loss', loss, step)
+            return loss.item()
+        else:
+            return None
 
     def update(self, replay_buffer, L, step):
         if self.encoder_type == 'pixel':
@@ -230,13 +234,23 @@ class AgentCURL(AgentSACBase):
         else:
             obs, action, reward, next_obs, not_done = replay_buffer.sample_proprio()
     
-        if step % self.log_interval == 0:
-            L.log('train/batch_reward', reward.mean(), step)
+        loss_dict = {}
 
-        self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        if step % self.log_interval == 0:
+            # L.log('train/batch_reward', reward.mean(), step)
+            loss_dict['train/batch_reward'] = reward.mean()
+
+        critic_loss = self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        if critic_loss is not None:
+            loss_dict['train_critic/loss'] = critic_loss
 
         if step % self.actor_update_freq == 0:
-            self.update_actor_and_alpha(obs, L, step)
+            actor_loss, target_entropy, entropy, alpha_loss, alpha = self.update_actor_and_alpha(obs, step)
+            loss_dict['train_actor/loss'] = actor_loss
+            loss_dict['train_actor/target_entropy'] = target_entropy
+            loss_dict['train_actor/entropy'] = entropy
+            loss_dict['train_alpha/loss'] = alpha_loss
+            loss_dict['train_alpha/value'] = alpha
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(
@@ -251,7 +265,11 @@ class AgentCURL(AgentSACBase):
             )
         if step % self.cpc_update_freq == 0 and self.encoder_type == 'pixel':
             obs_anchor, obs_pos = cpc_kwargs["obs_anchor"], cpc_kwargs["obs_pos"]
-            self.update_cpc(obs_anchor, obs_pos,cpc_kwargs, L, step)
+            cpc_loss = self.update_cpc(obs_anchor, obs_pos,cpc_kwargs, step)
+            if cpc_loss is not None:
+                loss_dict['train/curl_loss'] = cpc_loss
+        
+        return loss_dict
 
     def save_curl(self, model_dir, step):
         torch.save(

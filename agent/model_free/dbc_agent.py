@@ -101,7 +101,6 @@ class AgentDBC(AgentSACBase):
         current_Q1, current_Q2 = self.critic(obs, action, detach_encoder=False)
         critic_loss = F.mse_loss(current_Q1,
                                  target_Q) + F.mse_loss(current_Q2, target_Q)
-        L.log('train_critic/loss', critic_loss, step)
 
         # Optimize the critic
         self.critic_optimizer.zero_grad()
@@ -109,8 +108,9 @@ class AgentDBC(AgentSACBase):
         self.critic_optimizer.step()
 
         self.critic.log(L, step)
+        return critic_loss
 
-    def update_encoder(self, obs, action, reward, L, step):
+    def update_encoder(self, obs, action, reward, step):
         h = self.critic.encoder(obs)            
 
         # Sample random states across episodes at random
@@ -148,10 +148,9 @@ class AgentDBC(AgentSACBase):
         # bisimulation metric
         bisimilarity = r_dist + self.discount * transition_dist
         loss = (z_dist - bisimilarity).pow(2).mean()
-        L.log('train_ae/encoder_loss', loss, step)
         return loss
 
-    def update_transition_reward_model(self, obs, action, next_obs, reward, L, step):
+    def update_transition_reward_model(self, obs, action, next_obs, reward, step):
         h = self.critic.encoder(obs)
         pred_next_latent_mu, pred_next_latent_sigma = self.transition_model(torch.cat([h, action], dim=1))
         if pred_next_latent_sigma is None:
@@ -160,24 +159,31 @@ class AgentDBC(AgentSACBase):
         next_h = self.critic.encoder(next_obs)
         diff = (pred_next_latent_mu - next_h.detach()) / pred_next_latent_sigma
         loss = torch.mean(0.5 * diff.pow(2) + torch.log(pred_next_latent_sigma))
-        L.log('train_ae/transition_loss', loss, step)
 
         pred_next_latent = self.transition_model.sample_prediction(torch.cat([h, action], dim=1))
         pred_next_reward = self.reward_decoder(pred_next_latent)
         reward_loss = F.mse_loss(pred_next_reward, reward)
         total_loss = loss + reward_loss
-        return total_loss
+        return loss, total_loss
 
     def update(self, replay_buffer, L, step):
         # There is a current reward in original DBC repo
         # obs, action, _, reward, next_obs, not_done = replay_buffer.sample()
         obs, action, reward, next_obs, not_done = replay_buffer.sample()
 
-        L.log('train/batch_reward', reward.mean(), step)
+        loss_dict = {}
 
-        self.update_critic(obs, action, reward, next_obs, not_done, L, step)
-        transition_reward_loss = self.update_transition_reward_model(obs, action, next_obs, reward, L, step)
-        encoder_loss = self.update_encoder(obs, action, reward, L, step)
+        loss_dict['train/batch_reward'] = reward.mean()
+
+        critic_loss = self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        loss_dict['train_critic/loss'] = critic_loss
+
+        transition_loss, transition_reward_loss = self.update_transition_reward_model(obs, action, next_obs, reward, step)
+        loss_dict['train_ae/transition_loss'] = transition_loss
+
+        encoder_loss = self.update_encoder(obs, action, reward, step)
+        loss_dict['train_ae/encoder_loss'] = encoder_loss
+
         total_loss = self.bisim_coef * encoder_loss + transition_reward_loss
         self.encoder_optimizer.zero_grad()
         self.decoder_optimizer.zero_grad()
@@ -186,7 +192,12 @@ class AgentDBC(AgentSACBase):
         self.decoder_optimizer.step()
 
         if step % self.actor_update_freq == 0:
-            self.update_actor_and_alpha(obs, L, step)
+            actor_loss, target_entropy, entropy, alpha_loss, alpha = self.update_actor_and_alpha(obs, step)
+            loss_dict['train_actor/loss'] = actor_loss
+            loss_dict['train_actor/target_entropy'] = target_entropy
+            loss_dict['train_actor/entropy'] = entropy
+            loss_dict['train_alpha/loss'] = alpha_loss
+            loss_dict['train_alpha/value'] = alpha
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(

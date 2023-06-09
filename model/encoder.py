@@ -89,14 +89,8 @@ class PixelEncoder(nn.Module):
             return
 
         for k, v in self.outputs.items():
-            L.log_histogram('train_encoder/%s_hist' % k, v, step)
             if len(v.shape) > 2:
                 L.log_image('train_encoder/%s_img' % k, v[0], step)
-
-        for i in range(self.num_layers):
-            L.log_param('train_encoder/conv%s' % (i + 1), self.convs[i], step)
-        L.log_param('train_encoder/fc', self.fc, step)
-        L.log_param('train_encoder/ln', self.ln, step)
 
 
 class IdentityEncoder(nn.Module):
@@ -222,14 +216,9 @@ class PixelDelta2DEncoder(nn.Module):
             return
 
         for k, v in self.outputs.items():
-            L.log_histogram('train_encoder/%s_hist' % k, v, step)
             if len(v.shape) > 2:
                 L.log_image('train_encoder/%s_img' % k, v[0], step)
 
-        for i in range(self.num_layers):
-            L.log_param('train_encoder/conv%s' % (i + 1), self.convs[i], step)
-        L.log_param('train_encoder/fc', self.fc, step)
-        L.log_param('train_encoder/ln', self.ln, step)
 
 class RSSMEncoder(nn.Module):
     """RSSM encoder of pixels observations."""
@@ -307,7 +296,6 @@ class RSSMEncoder(nn.Module):
             return
 
         for k, v in self.outputs.items():
-            L.log_histogram('train_encoder/%s_hist' % k, v, step)
             if len(v.shape) > 2:
                 L.log_image('train_encoder/%s_img' % k, v[0], step)
 
@@ -388,7 +376,6 @@ class RSSMCarlaEncoder(nn.Module):
             return
 
         for k, v in self.outputs.items():
-            L.log_histogram('train_encoder/%s_hist' % k, v, step)
             if len(v.shape) > 2:
                 L.log_image('train_encoder/%s_img' % k, v[0], step)
 
@@ -456,12 +443,9 @@ class ViTEncoder(nn.Module):
             return
 
         for k, v in self.outputs.items():
-            L.log_histogram('train_encoder/%s_hist' % k, v, step)
             if len(v.shape) > 2:
                 L.log_image('train_encoder/%s_img' % k, v[0], step)
 
-        L.log_param('train_encoder/vit', self.image_encode, step)
-        L.log_param('train_encoder/linear', self.linear_map, step)
 
 _AVAILABLE_ENCODERS = {'pixel': PixelEncoder, 'identity': IdentityEncoder, 'rssm': RSSMEncoder,
     'carla_rssm': RSSMCarlaEncoder, 'vit': ViTEncoder}

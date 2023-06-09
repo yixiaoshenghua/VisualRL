@@ -52,15 +52,9 @@ class PixelDecoder(nn.Module):
             return
 
         for k, v in self.outputs.items():
-            L.log_histogram('train_decoder/%s_hist' % k, v, step)
             if len(v.shape) > 2:
                 L.log_image('train_decoder/%s_i' % k, v[0], step)
 
-        for i in range(self.num_layers):
-            L.log_param(
-                'train_decoder/deconv%s' % (i + 1), self.deconvs[i], step
-            )
-        L.log_param('train_decoder/fc', self.fc, step)
 
 class ConvDecoder(nn.Module):
 

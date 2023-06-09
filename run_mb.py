@@ -288,7 +288,7 @@ def main():
             L.log_scalars(logs, global_step)
 
             if global_step % args.log_video_freq ==0 and args.log_video_freq != -1 and len(video_images[0])!=0:
-                L.log_video(video_images, global_step, args.max_videos_to_save)
+                L.log_videos(video_images, global_step, args.max_videos_to_save)
 
             if global_step % args.checkpoint_interval == 0:
                 ckpt_dir = os.path.join(logdir, 'ckpts/')

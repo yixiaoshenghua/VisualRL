@@ -562,6 +562,33 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
 
     return agent
 
+def make_replay_buffer(args, env, obs_shape, pre_aug_obs_shape, device):
+    if args.agent.lower() == 'curl':
+        replay_buffer = CPCReplayBuffer(
+            obs_shape=pre_aug_obs_shape,
+            action_shape=env.action_space.shape,
+            capacity=args.replay_buffer_capacity,
+            batch_size=args.batch_size,
+            device=device
+        )
+    elif args.agent.lower() == 'sac_ae' or args.agent.lower() == 'dbc':
+        replay_buffer = CPCReplayBuffer(
+            obs_shape=obs_shape,
+            action_shape=env.action_space.shape,
+            capacity=args.replay_buffer_capacity,
+            batch_size=args.batch_size,
+            device=device
+        )
+    elif args.agent.lower() == 'drq':
+        replay_buffer = AugReplayBuffer(
+            obs_shape=obs_shape,
+            action_shape=env.action_space.shape,
+            capacity=args.replay_buffer_capacity,
+            image_pad=args.image_pad,
+            device=device
+        )
+    return replay_buffer
+
 def main():
     args = parse_args()
     if args.seed == -1: 
@@ -681,30 +708,7 @@ def main():
         action_range=action_range
     )
 
-    if 'CURL' in agent.__class__.__name__:
-        replay_buffer = CPCReplayBuffer(
-            obs_shape=pre_aug_obs_shape,
-            action_shape=env.action_space.shape,
-            capacity=args.replay_buffer_capacity,
-            batch_size=args.batch_size,
-            device=device
-        )
-    elif 'SACAE' in agent.__class__.__name__ or 'DBC' in agent.__class__.__name__:
-        replay_buffer = CPCReplayBuffer(
-            obs_shape=obs_shape,
-            action_shape=env.action_space.shape,
-            capacity=args.replay_buffer_capacity,
-            batch_size=args.batch_size,
-            device=device
-        )
-    elif 'DrQ' in agent.__class__.__name__:
-        replay_buffer = AugReplayBuffer(
-            obs_shape=obs_shape,
-            action_shape=env.action_space.shape,
-            capacity=args.replay_buffer_capacity,
-            image_pad=args.image_pad,
-            device=device
-        )
+    replay_buffer = make_replay_buffer(args, env, obs_shape, pre_aug_obs_shape, device)
 
     L = Logger(args.work_dir, use_tb=args.save_tb)
 
@@ -751,7 +755,11 @@ def main():
         if step >= args.init_steps:
             num_updates = args.init_steps if step == args.init_steps else 1
             for _ in range(num_updates):
-                agent.update(replay_buffer, L, step)
+                loss_dict = agent.update(replay_buffer, L, step)
+            #TODO: Update L using loss_dict
+            '''
+            # Some code here
+            '''
 
         next_obs, reward, done, _ = env.step(action)
 
@@ -762,10 +770,7 @@ def main():
         episode_reward += reward
 
         #TODO: Some replay buffer needs parameters like this: (obs, action, reward, next_obs, *done,* done_bool)
-        if args.agent.lower() == 'curl' or args.agent.lower() == 'sac_ae' or args.agent.lower() == 'dbc':
-            replay_buffer.add(obs, action, reward, next_obs, done_bool)
-        elif 'DrQ' in agent.__class__.__name__:
-            replay_buffer.add(obs, action, reward, next_obs, done, done_bool)
+        replay_buffer.add(obs, action, reward, next_obs, done, done_bool)
         
         # CURL doesn't need this
         # np.copyto(replay_buffer.k_obses[replay_buffer.idx - args.k], next_obs)

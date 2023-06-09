@@ -108,19 +108,27 @@ class AgentSACAE(AgentSACBase):
 
         self.encoder_optimizer.step()
         self.decoder_optimizer.step()
-        L.log('train_ae/ae_loss', loss, step)
 
         self.decoder.log(L, step, log_freq=LOG_FREQ)
+        return loss
 
     def update(self, replay_buffer, L, step):
         obs, action, reward, next_obs, not_done = replay_buffer.sample()
 
-        L.log('train/batch_reward', reward.mean(), step)
+        loss_dict = {}
 
-        self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        loss_dict['train/batch_reward'] = reward.mean()
+
+        critic_loss = self.update_critic(obs, action, reward, next_obs, not_done, L, step)
+        loss_dict['train_critic/loss'] = critic_loss
 
         if step % self.actor_update_freq == 0:
-            self.update_actor_and_alpha(obs, L, step)
+            actor_loss, target_entropy, entropy, alpha_loss, alpha = self.update_actor_and_alpha(obs, step)
+            loss_dict['train_actor/loss'] = actor_loss
+            loss_dict['train_actor/target_entropy'] = target_entropy
+            loss_dict['train_actor/entropy'] = entropy
+            loss_dict['train_alpha/loss'] = alpha_loss
+            loss_dict['train_alpha/value'] = alpha
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(
@@ -135,7 +143,8 @@ class AgentSACAE(AgentSACBase):
             )
 
         if self.decoder is not None and step % self.decoder_update_freq == 0:
-            self.update_decoder(obs, obs, L, step)
+            decoder_loss = self.update_decoder(obs, obs, L, step)
+            loss_dict['train_ae/ae_loss'] = decoder_loss
 
     def save(self, model_dir, step):
         torch.save(
