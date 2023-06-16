@@ -26,6 +26,8 @@ class AgentDreamer:
         self.step = args.init_steps
         self._build_model(restore=self.restore)
 
+        self.train()
+
     def _build_model(self, restore):
 
         self.rssm = RSSM(
@@ -118,6 +120,17 @@ class AgentDreamer:
 
         if restore:
             self.restore_checkpoint(self.restore_path)
+
+    def train(self, training=True):
+        self.training = training
+        self.rssm.train(training)
+        self.actor.train(training)
+        self.critic.train(training)
+        self.obs_encoder.train(training)
+        self.obs_decoder.train(training)
+        self.reward_model.train(training)
+        if self.args.use_disc_model:
+            self.discount_model.train(training)
 
     def reset(self):
         self.prev_state = self.rssm.init_state(1, self.device)
@@ -355,7 +368,7 @@ class AgentDreamer:
             self._updates += 1
 
     def update(self, replay_buffer):
-        obs, acs, rews, terms = replay_buffer.sample_dreamer()
+        obs, acs, rews, terms = replay_buffer.sample()
         obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
         acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
         rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)

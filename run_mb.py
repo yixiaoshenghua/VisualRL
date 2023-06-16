@@ -20,7 +20,7 @@ from agent.model_based.tia_agent import AgentTIA
 
 from eval import make_eval
 
-os.environ['MUJOCO_GL'] = 'glfw' # glfw, egl, osmesa
+os.environ['MUJOCO_GL'] = 'egl' # glfw, egl, osmesa
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -28,8 +28,8 @@ def parse_args():
     parser.add_argument('--env', type=str, default='walker-walk', help='Control Suite environment')
     parser.add_argument('--agent', type=str, default='Dreamerv1', choices=['Dreamerv1', 'Dreamerv2'], help='choosing algorithm')
     parser.add_argument('--exp-name', type=str, default='lr1e-3', help='name of experiment for logging')
-    parser.add_argument('--train', action='store_true', help='trains the model')
-    parser.add_argument('--evaluate', action='store_true', help='tests the model')
+    parser.add_argument('--train', action='store_true', default=False, help='trains the model')
+    parser.add_argument('--evaluate', action='store_true', default=False, help='tests the model')
     parser.add_argument('--seed', type=int, default=1, help='Random seed')
     parser.add_argument('--gpu', type=int, default=0, help="GPU id used")
     # Data parameters
@@ -62,7 +62,7 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=50, help='batch size')
     parser.add_argument('--train-seq-len', type=int, default=50, help='sequence length for training world model')
     parser.add_argument('--imagine-horizon', type=int, default=15, help='Latent imagination horizon')
-    parser.add_argument('--use-disc-model', action='store_true', help='whether to use discount model' )
+    parser.add_argument('--use-disc-model', action='store_true', default=False, help='whether to use discount model' )
     # Coeffecients and constants
     parser.add_argument('--free-nats', type=float, default=3, help='free nats')
     parser.add_argument('--discount', type=float, default=0.99, help='discount factor for actor critic')
@@ -81,8 +81,9 @@ def parse_args():
     parser.add_argument('--slow-target-update', type=int, default=100, help='Slow target value model update interval')
     parser.add_argument('--slow-target-fraction', type=float, default=1.0, help='The fraction of EMA update')
     # Eval parameters
-    parser.add_argument('--test', action='store_true', help='Test only')
+    parser.add_argument('--test', action='store_true', default=False, help='Test only')
     parser.add_argument('--test-interval', type=int, default=10000, help='Test interval (episodes)')
+    parser.add_argument('--eval-freq', type=int, default=100, help='Test interval (episodes)')
     parser.add_argument('--test-episodes', type=int, default=10, help='Number of test episodes')
     # saving and checkpoint parameters
     parser.add_argument('--scalar-freq', type=int, default=1e3, help='scalar logging freq')
@@ -90,9 +91,11 @@ def parse_args():
     parser.add_argument('--max-videos-to-save', type=int, default=2, help='max_videos for saving')
     parser.add_argument('--checkpoint-interval', type=int, default=100000, help='Checkpoint interval (episodes)')
     parser.add_argument('--checkpoint-path', type=str, default='', help='Load model checkpoint')
-    parser.add_argument('--restore', action='store_true', help='restores model from checkpoint')
+    parser.add_argument('--restore', action='store_true', default=False, help='restores model from checkpoint')
     parser.add_argument('--experience-replay', type=str, default='', help='Load experience replay')
-    parser.add_argument('--render', action='store_true', help='Render environment')
+    parser.add_argument('--render', action='store_true', default=False, help='Render environment')
+    parser.add_argument('--save-model', action='store_true', default=False, help='whether to save model')
+    parser.add_argument('--save-buffer', action='store_true', default=False, help='whether to save buffer')
 
 
     args = parser.parse_args()
@@ -170,22 +173,26 @@ def main():
         seed_episode_rews = [0.0]
         start_time = time.time()
         episode, episode_reward, done = 0, 0, False
+        episode_step = 0
         for step in range(args.total_steps):
             if done:
                 # log time
-                L.log_scalar('train/duration', time.time() - start_time, step)
-                start_time = time.time()
+                # L.log_scalar('train/duration', time.time() - start_time, step)
+                if step > 0:
+                    L.log('train/duration', time.time() - start_time, step)
+                    start_time = time.time()
+                    L.dump(step)
 
                 # evaluate agent periodically
                 if step % args.eval_freq == 0:
-                    L.log('eval/episode', episode, step)
+                    # L.log_scalar('eval/episode', episode, step)
                     # evaluate(env, agent, video, args.num_eval_episodes, L, step, args=args)
                     if args.save_model:
                         agent.save(os.path.join(logdir, 'models{}.pt'.format(step)))
-                    # if args.save_buffer:
-                    #     replay_buffer.save(buffer_dir)
-
-                L.log_scalar('train/episode_reward', episode_reward, step)
+                    if args.save_buffer:
+                        replay_buffer.save(buffer_dir)
+                
+                # L.log_scalar('train/episode_reward', episode_reward, step)
 
                 obs = env.reset()
                 agent.reset()
@@ -195,7 +202,7 @@ def main():
                 episode += 1
                 reward = 0
 
-                L.log_scalar('train/episode', episode, step)
+                # L.log_scalar('train/episode', episode, step)
 
             # sample action for data collection
             if step < args.init_steps:
@@ -210,23 +217,18 @@ def main():
                 for _ in range(num_updates):
                     loss_dict = agent.update(replay_buffer)
                 
-                L.update({
-                    **loss_dict,
-                    'train_avg_reward': np.mean(train_rews),
-                    'train_max_reward': np.max(train_rews),
-                    'train_min_reward': np.min(train_rews),
-                    'train_std_reward': np.std(train_rews),
-                })
+                # L.update({
+                #     **loss_dict,
+                #     'train_avg_reward': np.mean(train_rews),
+                #     'train_max_reward': np.max(train_rews),
+                #     'train_min_reward': np.min(train_rews),
+                #     'train_std_reward': np.std(train_rews),
+                # })
             
             next_obs, reward, done, _ = env.step(action)
 
-            # allow infinit bootstrap
-            done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(
-                done
-            )
             episode_reward += reward
-
-            replay_buffer.add(obs, action, reward, next_obs, done_bool)
+            replay_buffer.add(obs, action, reward, done)
 
             obs = next_obs
             episode_step += 1

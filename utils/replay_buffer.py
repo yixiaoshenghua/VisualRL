@@ -58,7 +58,8 @@ class MBReplayBuffer:
         obs, acs, rews, terms= self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
         return obs, acs, rews, terms
 
-
+    def save(self, save_dir):
+        pass
 
 class CPCReplayBuffer(Dataset):
     """Buffer to store environment transitions."""
