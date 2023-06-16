@@ -7,10 +7,13 @@ import json
 import torch
 
 from collections import OrderedDict
-from dmc2gym.dmc2gym import wrappers
+# from dmc2gym.dmc2gym import wrappers
+from dmc2gym import wrappers
 
 from utils.logger import MBLogger
 from utils.video import VideoRecorder
+from utils.replay_buffer import MBReplayBuffer
+import utils
 
 from agent.model_based.dreamer_agent import AgentDreamer
 from agent.model_based.tia_agent import AgentTIA
@@ -23,7 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--env', type=str, default='walker-walk', help='Control Suite environment')
-    parser.add_argument('--algo', type=str, default='Dreamerv1', choices=['Dreamerv1', 'Dreamerv2'], help='choosing algorithm')
+    parser.add_argument('--agent', type=str, default='Dreamerv1', choices=['Dreamerv1', 'Dreamerv2'], help='choosing algorithm')
     parser.add_argument('--exp-name', type=str, default='lr1e-3', help='name of experiment for logging')
     parser.add_argument('--train', action='store_true', help='trains the model')
     parser.add_argument('--evaluate', action='store_true', help='tests the model')
@@ -52,8 +55,8 @@ def parse_args():
     parser.add_argument('--actor-min-std', type=float, default=1e-4, help='Action min std')
     parser.add_argument('--actor-init-std', type=float, default=5, help='Action init std')
     # Training parameters
-    parser.add_argument('--total_steps', type=int, default=1e6, help='total number of training steps')
-    parser.add_argument('--seed-steps', type=int, default=5000, help='seed episodes')
+    parser.add_argument('--total-steps', type=int, default=int(1e6), help='total number of training steps')
+    parser.add_argument('--init-steps', type=int, default=5000, help='seed episodes')
     parser.add_argument('--update-steps', type=int, default=100, help='num of train update steps per iter')
     parser.add_argument('--collect-steps', type=int, default=1000, help='actor collect steps per 1 train iter')
     parser.add_argument('--batch-size', type=int, default=50, help='batch size')
@@ -104,13 +107,13 @@ def make_env(args):
     #env = env_wrapper.RewardObs(env)
     return env
 
-def make_log(args):
-    return None
+def make_log(args, logdir):
+    return MBLogger(logdir)
 
 def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
-    if args.algo == 'Dreamerv1':
+    if args.agent == 'Dreamerv1':
         agent = AgentDreamer(args, obs_shape, action_shape, device, args.restore)
-    elif args.algo == 'TIA':
+    elif args.agent == 'TIA':
         agent = AgentTIA(args, obs_shape, action_shape, device, args.restore)
     return agent
 
@@ -122,7 +125,7 @@ def main():
     # make logdir
     logdir_root = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')
     os.makedirs(logdir_root, exist_ok=True)
-    logdir = os.path.join(logdir_root, args.env, args.algo, args.exp_name + '_' + time.strftime("%d-%m-%Y-%H-%M-%S"))
+    logdir = os.path.join(logdir_root, args.env, args.agent, args.exp_name + '_' + time.strftime("%d-%m-%Y-%H-%M-%S"))
     os.makedirs(logdir, exist_ok=False)
 
     # set seed
@@ -143,17 +146,17 @@ def main():
     obs_shape = train_env.observation_space['image'].shape
     action_shape = train_env.action_space.shape[0]
     # make evaluation function
-    evaluate = make_eval(args.agent)
+    # evaluate = make_eval(args.agent)
 
     # make agent
     agent = make_agent(obs_shape, action_shape, args, device, train_env.action_space.high)
     # make replay buffer
-    replay_buffer = MBReplayBuffer(args.buffer_size, obs_shape, action_shape, image_channel=3, device=device)
+    replay_buffer = MBReplayBuffer(args.buffer_size, obs_shape, action_shape, seq_len=args.train_seq_len, batch_size=args.batch_size)
 
     # make logger
-    L = MBLogger(logdir)
+    L = make_log(args, logdir)
     # make video recorder
-    video = VideoRecorder(logdir if args.save_video else None)
+    # video = VideoRecorder(logdir if args.save_video else None)
     # save args
     with open(os.path.join(logdir, 'args.json'), 'w') as f:
         json.dump(vars(args), f, sort_keys=True, indent=4)
@@ -176,7 +179,7 @@ def main():
                 # evaluate agent periodically
                 if step % args.eval_freq == 0:
                     L.log('eval/episode', episode, step)
-                    evaluate(env, agent, video, args.num_eval_episodes, L, step, args=args)
+                    # evaluate(env, agent, video, args.num_eval_episodes, L, step, args=args)
                     if args.save_model:
                         agent.save(os.path.join(logdir, 'models{}.pt'.format(step)))
                     # if args.save_buffer:
@@ -195,10 +198,10 @@ def main():
                 L.log_scalar('train/episode', episode, step)
 
             # sample action for data collection
-            if step < args.seed_steps:
+            if step < args.init_steps:
                 action = env.action_space.sample()
             else:
-                with util.eval_mode(agent):
+                with utils.eval_mode(agent):
                     action = agent.sample_action(obs)
 
             # run training update
@@ -228,10 +231,11 @@ def main():
             obs = next_obs
             episode_step += 1
 
-    elif args.evaluate:
-        evaluate(test_env, agent, video, args.num_eval_episodes, L, step, args=args)
+    # elif args.evaluate:
+    #     evaluate(test_env, agent, video, args.num_eval_episodes, L, step, args=args)
 
     # original implementation
+    '''
     if args.train:
         initial_logs = OrderedDict()
         seed_episode_rews = agent.collect_random_episodes(train_env, args.seed_steps//args.action_repeat)
@@ -305,14 +309,15 @@ def main():
         episode_rews, video_images = agent.evaluate(test_env, args.test_episodes, render=True)
 
         logs.update({
-            'test_avg_reward':np.mean(episode_rews),
+            'test_avg_reward': np.mean(episode_rews),
             'test_max_reward': np.max(episode_rews),
             'test_min_reward': np.min(episode_rews),
-            'test_std_reward':np.std(episode_rews),
+            'test_std_reward': np.std(episode_rews),
         })
 
         L.dump_scalars_to_pickle(logs, 0, log_title='test_scalars.pkl')
         L.log_videos(video_images, 0, max_videos_to_save=args.max_videos_to_save)
+    '''
 
 if __name__ == '__main__':
     main()

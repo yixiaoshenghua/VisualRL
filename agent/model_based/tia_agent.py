@@ -16,7 +16,7 @@ class AgentTIA:
 
         self.args = args
         if self.args.actor_grad == 'auto':
-            self.args.actor_grad = 'dynamics' if self.args.algo == 'Dreamerv1' else 'reinforce'
+            self.args.actor_grad = 'dynamics' if self.args.agent == 'Dreamerv1' else 'reinforce'
         self.obs_shape = obs_shape
         self.action_size = action_size
         self.device = device
@@ -257,7 +257,7 @@ class AgentTIA:
         if self.args.use_disc_model:
             disc_dist = self.discount_model(features)
 
-        kl_loss = self.main_rssm.get_kl_loss(prior, self.posterior, self.args.kl_alpha, self.args.free_nats, self.args.algo=='TIAv2')
+        kl_loss = self.main_rssm.get_kl_loss(prior, self.posterior, self.args.kl_alpha, self.args.free_nats, self.args.agent=='TIAv2')
 
         obs_loss = -torch.mean(image_pred_joint.log_prob(obs[1:])) 
         rew_loss = -torch.mean(rew_dist.log_prob(rews[:-1]))
@@ -272,7 +272,7 @@ class AgentTIA:
             model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss 
         
         # disen model loss
-        disen_kl_loss = self.disen_rssm.get_kl_loss(disen_prior, self.disen_posterior, self.args.kl_alpha, self.args.free_nats, self.args.algo=='TIAv2')
+        disen_kl_loss = self.disen_rssm.get_kl_loss(disen_prior, self.disen_posterior, self.args.kl_alpha, self.args.free_nats, self.args.agent=='TIAv2')
 
         disen_obs_loss = -torch.mean(image_pred_joint.log_prob(obs[1:])) 
         disen_only_obs_loss = -torch.mean(image_pred_disen.log_prob(obs[1:]))

@@ -15,7 +15,7 @@ class AgentDreamer:
 
         self.args = args
         if self.args.actor_grad == 'auto':
-            self.args.actor_grad = 'dynamics' if self.args.algo == 'Dreamerv1' else 'reinforce'
+            self.args.actor_grad = 'dynamics' if self.args.agent == 'Dreamerv1' else 'reinforce'
         self.obs_shape = obs_shape
         self.action_size = action_size
         self.device = device
@@ -23,7 +23,7 @@ class AgentDreamer:
         self.restore_path = args.checkpoint_path
         self.data_buffer = MBReplayBuffer(self.args.buffer_size, self.obs_shape, self.action_size,
                                                     self.args.train_seq_len, self.args.batch_size)
-        self.step = args.seed_steps
+        self.step = args.init_steps
         self._build_model(restore=self.restore)
 
     def _build_model(self, restore):
@@ -123,7 +123,7 @@ class AgentDreamer:
         self.prev_state = self.rssm.init_state(1, self.device)
         self.prev_action = torch.zeros(1, self.action_size).to(self.device)
 
-    def select_action(self, obs):
+    def select_action(self, obs, explore=False):
         obs = obs['image']
         obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
         obs_embed = self.obs_encoder(preprocess_obs(obs))
@@ -263,7 +263,7 @@ class AgentDreamer:
         prior_dist = self.rssm.get_dist(prior)
         post_dist = self.rssm.get_dist(self.posterior)
 
-        if self.args.algo == 'Dreamerv2':
+        if self.args.agent == 'Dreamerv2':
             post_no_grad = self.rssm.detach_state(self.posterior)
             prior_no_grad = self.rssm.detach_state(prior)
             
