@@ -148,6 +148,7 @@ def main():
     test_env  = make_env(args)
     obs_shape = train_env.observation_space['image'].shape
     action_shape = train_env.action_space.shape[0]
+
     # make evaluation function
     # evaluate = make_eval(args.agent)
 
@@ -157,7 +158,7 @@ def main():
     replay_buffer = MBReplayBuffer(args.buffer_size, obs_shape, action_shape, seq_len=args.train_seq_len, batch_size=args.batch_size)
 
     # make logger
-    L = make_log(args, logdir)
+    L = make_log(args, logdir) # [TODO] No module named 'caffe2' -> No module named 'tools.setup_helpers'
     # make video recorder
     # video = VideoRecorder(logdir if args.save_video else None)
     # save args
@@ -177,20 +178,18 @@ def main():
         for step in range(args.total_steps):
             if done:
                 # log time
-                # L.log_scalar('train/duration', time.time() - start_time, step)
-                if step > 0:
-                    L.log('train/duration', time.time() - start_time, step)
-                    start_time = time.time()
-                    L.dump(step)
+                # L.log('train/duration', time.time() - start_time, step)
+                start_time = time.time()
+                # L.dump(step)
 
                 # evaluate agent periodically
                 if step % args.eval_freq == 0:
                     # L.log_scalar('eval/episode', episode, step)
-                    # evaluate(env, agent, video, args.num_eval_episodes, L, step, args=args)
+                    # evaluate(env, agent, video, args.num_eval_episodes, L, step, args=args) # [TODO] not implemented yet
                     if args.save_model:
                         agent.save(os.path.join(logdir, 'models{}.pt'.format(step)))
                     if args.save_buffer:
-                        replay_buffer.save(buffer_dir)
+                        replay_buffer.save('xxx') # [TODO] not implemented yet
                 
                 # L.log_scalar('train/episode_reward', episode_reward, step)
 
