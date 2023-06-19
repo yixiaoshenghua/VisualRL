@@ -8,35 +8,30 @@ import sys
 import random
 import time
 import json
-import dmc2gym
 import copy
 
 import utils.util as util
 from utils.logger import Logger
 from utils.video import VideoRecorder
 from utils.replay_buffer import CPCReplayBuffer, ReplayBufferFLARE, AugReplayBuffer
+import envs
 
 from agent.model_free.sacae_agent import AgentSACAE
 from agent.model_free.flare_agent import AgentFLARE
 from agent.model_free.curl_agent import AgentCURL
-# from agent.model_free.rad_agent import AgentRad
+from agent.model_free.rad_agent import AgentRad
 from agent.model_free.baseline import BaselineAgent
 from agent.model_free.deepmdp import DeepMDPAgent
 from agent.model_free.dbc_agent import AgentDBC
 from agent.model_free.drq_agent import AgentDrQ
 from agent.model_free.dribo_agent import AgentDRIBO
 
-# from agent.plannet_agent import AgentPLANNET
-# from agent.dreamer_agent import AgentDREAMER
-# from agent.tia_agent import AgentTIA
-
 import numpy as np
 
 from eval import make_eval
 
 #TODO: Set the environment variable of OpenGL here
-# os.environ['PYOPENGL_PLATFORM'] = 'egl'
-os.environ['MUJOCO_GL']='osmesa'
+os.environ['MUJOCO_GL'] = 'osmesa'
 
 
 def parse_args():
@@ -129,93 +124,7 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def make_env(args):
-    # per dreamer: https://github.com/danijar/dreamer/blob/02f0210f5991c7710826ca7881f19c64a012290c/wrappers.py#L26
-    camera_id = 2 if args.domain_name == 'quadruped' else 0
 
-    if args.distractor == 'driving':
-        img_source = 'video'
-        total_frames = 1000
-        resource_files = os.path.join(args.video_dir, '*.mp4')
-    elif args.distractor == 'noise':
-        img_source = 'noise'
-        total_frames = None
-        resource_files = None
-    elif args.distractor == 'none':
-        img_source = None
-        total_frames = None
-        resource_files = None
-    else:
-        raise NotImplementedError
-    if args.domain_name == "handle":
-        env = gym.make("HandleEnv-v0", distractor_num=args.distractor_num, same_center=args.same_center, color=args.color)
-    else:
-        env = dmc2gym.make(
-            domain_name=args.domain_name,
-            task_name=args.task_name,
-            # resource_files=resource_files,
-            # img_source=img_source,
-            # total_frames=total_frames,
-            seed=args.seed,
-            visualize_reward=False,
-            from_pixels=True,
-            height=args.image_size,
-            width=args.image_size,
-            frame_skip=args.action_repeat
-        )
-    #################################################
-    if args.combine_envs == 'concat':
-        dis_envs = []
-        for i in range(3):
-            dis_envs.append(
-                dmc2gym.make(
-                    domain_name=args.domain_name,
-                    task_name=args.task_name,
-                    # resource_files=resource_files,
-                    # img_source=img_source,
-                    # total_frames=total_frames,
-                    seed=args.seed,
-                    visualize_reward=False,
-                    from_pixels=True,
-                    height=args.image_size,
-                    width=args.image_size,
-                    frame_skip=args.action_repeat
-                ))
-        env = util.AgentDistractorEnv(env, dis_envs, unchange=args.unchange)
-    elif 'stack' in args.combine_envs:
-        if args.combine_envs == 'stack_other':
-            dis_envs = {'cheetah': ['walker', 'walk'], 'walker': ['reacher', 'easy'], 'reacher': ['cheetah', 'run']}
-        elif args.combine_envs == 'stack_self':
-            dis_envs = {'cheetah': ['cheetah', 'run'], 'walker': ['walker', 'walk'], 'reacher': ['reacher', 'easy']}
-        dis_env = dmc2gym.make(
-            domain_name=dis_envs[args.domain_name][0],
-            task_name=dis_envs[args.domain_name][1],
-            # resource_files=resource_files,
-            # img_source=img_source,
-            # total_frames=total_frames,
-            seed=args.seed,
-            visualize_reward=False,
-            from_pixels=True,
-            height=args.image_size,
-            width=args.image_size,
-            frame_skip=args.action_repeat
-        )
-        env = util.AgentAlphaEnv(env, dis_env, unchange=args.unchange, alpha=args.env_alpha)
-    
-    #################################################
-    env = util.FrameStack(env, k=args.frame_stack)
-    if args.domain_name == 'handle':
-        env.observation_space = gym.spaces.Box(
-            low=0,
-            high=255,
-            shape=env.observation_space.shape,
-            dtype=env.observation_space.dtype)
-
-    env.seed(args.seed)
-    assert env.action_space.low.min() >= -1
-    assert env.action_space.high.max() <= 1
-
-    return env
 
 def make_log(args):
     return
@@ -596,84 +505,16 @@ def main():
     util.set_seed_everywhere(args.seed)
     evaluate = make_eval(args.agent)
 
-    pre_transform_image_size = args.pre_transform_image_size if 'crop' in args.data_augs else args.image_size
-
-    #TODO: The size of the state in DrQ is different from that of curl and others. How to fix this? Maybe the above line?
-    if args.agent.lower() == 'drq' or args.agent.lower() == 'sac_ae' or args.agent.lower() == 'dbc':
-        env = dmc2gym.make(
-            domain_name=args.domain_name,
-            task_name=args.task_name,
-            #TODO: When to use these parameters?
-            # resource_files=args.resource_files,
-            # img_source=args.img_source,
-            # total_frames=args.total_frames,
-            seed=args.seed,
-            visualize_reward=False,
-            from_pixels=(args.encoder_type == 'pixel'),
-            height=args.image_size,
-            width=args.image_size,
-            frame_skip=args.action_repeat
-        )
-    else:
-        env = dmc2gym.make(
-            domain_name=args.domain_name,
-            task_name=args.task_name,
-            #TODO: When to use these parameters?
-            # resource_files=args.resource_files,
-            # img_source=args.img_source,
-            # total_frames=args.total_frames,
-            seed=args.seed,
-            visualize_reward=False,
-            from_pixels=(args.encoder_type == 'pixel'),
-            height=pre_transform_image_size,
-            width=pre_transform_image_size,
-            frame_skip=args.action_repeat
-        )
-    env.seed(args.seed)
-    action_range = [float(env.action_space.low.min()), float(env.action_space.high.max())]
-
-    if args.agent.lower() == 'drq' or args.agent.lower() == 'curl':
-        eval_env = dmc2gym.make(
-            domain_name=args.domain_name,
-            task_name=args.task_name,
-            #TODO: When to use these parameters?
-            # resource_files=args.resource_files,
-            # img_source=args.img_source,
-            # total_frames=args.total_frames,
-            seed=args.seed,
-            visualize_reward=False,
-            from_pixels=(args.encoder_type == 'pixel'),
-            height=pre_transform_image_size,
-            width=pre_transform_image_size,
-            frame_skip=args.action_repeat
-        )
-    else:
-        eval_env = dmc2gym.make(
-            domain_name=args.domain_name,
-            task_name=args.task_name,
-            #TODO: When to use these parameters?
-            # resource_files=args.resource_files,
-            # img_source=args.img_source,
-            # total_frames=args.total_frames,
-            seed=args.seed,
-            visualize_reward=False,
-            from_pixels=(args.encoder_type == 'pixel'),
-            height=args.image_size,
-            width=args.image_size,
-            frame_skip=args.action_repeat
-        )
-
-    # stack several consecutive frames together
-    if args.encoder_type == 'pixel':
-        env = util.FrameStack(env, k=args.frame_stack)
-        eval_env = util.FrameStack(eval_env, k=args.frame_stack)
+    train_env = envs.make_env(args)
+    test_env = envs.make_env(args)
+    action_range = [float(train_env.action_space.low.min()), float(train_env.action_space.high.max())]
 
     # make directory
     ts = time.gmtime() 
     ts = time.strftime("%m-%d-%H-%M", ts)    
     env_name = args.domain_name + '-' + args.task_name
     exp_name = args.agent + '-' + env_name + '-s' + str(args.seed)  + '-' + ts + '-im' + str(args.image_size) +'-b'  \
-    + str(args.batch_size) + '-' + args.encoder_type
+    + str(args.batch_size)
     args.work_dir = args.work_dir + '/'  + exp_name
 
     util.make_dir(args.work_dir)
@@ -689,26 +530,22 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # the dmc2gym wrapper standardizes actions
-    assert env.action_space.low.min() >= -1
-    assert env.action_space.high.max() <= 1
+    assert train_env.action_space.low.min() >= -1
+    assert test_env.action_space.high.max() <= 1
 
     #TODO: Added a reshape process
-    if args.encoder_type == 'pixel':
-        obs_shape = (3*args.frame_stack, args.image_size, args.image_size)
-        pre_aug_obs_shape = (3*args.frame_stack,args.pre_transform_image_size,args.pre_transform_image_size)
-    else:
-        obs_shape = env.observation_space.shape
-        pre_aug_obs_shape = obs_shape
+    obs_shape = (3*args.frame_stack, args.image_size, args.image_size)
+    pre_aug_obs_shape = (3*args.frame_stack, args.pre_transform_image_size, args.pre_transform_image_size)
     
     agent = make_agent(
         obs_shape=obs_shape,
-        action_shape=env.action_space.shape,
+        action_shape=train_env.action_space.shape,
         args=args,
         device=device, 
         action_range=action_range
     )
 
-    replay_buffer = make_replay_buffer(args, env, obs_shape, pre_aug_obs_shape, device)
+    replay_buffer = make_replay_buffer(args, train_env, obs_shape, pre_aug_obs_shape, device)
 
     L = Logger(args.work_dir, use_tb=args.save_tb)
 
@@ -727,7 +564,7 @@ def main():
             # evaluate agent periodically
             if step % args.eval_freq == 0:
                 L.log('eval/episode', episode, step)
-                evaluate(env, agent, video, args.num_eval_episodes, L, step, args=args)
+                evaluate(test_env, agent, video, args.num_eval_episodes, L, step, args=args)
                 if args.save_model:
                     agent.save(model_dir, step)
                 if args.save_buffer:
@@ -735,7 +572,7 @@ def main():
 
             L.log('train/episode_reward', episode_reward, step)
 
-            obs = env.reset()
+            obs = train_env.reset()
             done = False
             episode_reward = 0
             episode_step = 0
@@ -746,7 +583,7 @@ def main():
 
         # sample action for data collection
         if step < args.init_steps:
-            action = env.action_space.sample()
+            action = train_env.action_space.sample()
         else:
             with util.eval_mode(agent):
                 action = agent.sample_action(obs)
@@ -761,10 +598,10 @@ def main():
             # Some code here
             '''
 
-        next_obs, reward, done, _ = env.step(action)
+        next_obs, reward, done, _ = train_env.step(action)
 
         # allow infinit bootstrap
-        done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(
+        done_bool = 0 if episode_step + 1 == train_env._max_episode_steps else float(
             done
         )
         episode_reward += reward

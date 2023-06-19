@@ -7,8 +7,7 @@ import json
 import torch
 
 from collections import OrderedDict
-# from dmc2gym.dmc2gym import wrappers
-from dmc2gym import wrappers
+import envs
 
 from utils.logger import MBLogger
 from utils.video import VideoRecorder
@@ -102,14 +101,6 @@ def parse_args():
     
     return args
 
-def make_env(args):
-    env = wrappers.DeepMindControl(args.env, args.seed)
-    env = wrappers.ActionRepeat(env, args.action_repeat)
-    env = wrappers.NormalizeActions(env)
-    env = wrappers.TimeLimit(env, args.time_limit / args.action_repeat)
-    #env = env_wrapper.RewardObs(env)
-    return env
-
 def make_log(args, logdir):
     return MBLogger(logdir)
 
@@ -144,8 +135,8 @@ def main():
         device = torch.device('cpu')
 
     # make train and eval env
-    train_env = make_env(args)
-    test_env  = make_env(args)
+    train_env = envs.make_env(args)
+    test_env  = envs.make_env(args)
     obs_shape = train_env.observation_space['image'].shape
     action_shape = train_env.action_space.shape[0]
 
