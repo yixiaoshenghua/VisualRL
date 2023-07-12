@@ -20,7 +20,7 @@ class AgentDreamer:
         self.action_size = action_size
         self.device = device
         self.restore = restore
-        self.restore_path = args.checkpoint_path
+        self.restore_path = args.restore_checkpoint_path
         self.data_buffer = MBReplayBuffer(self.args.buffer_size, self.obs_shape, self.action_size,
                                                     self.args.train_seq_len, self.args.batch_size)
         self.step = args.init_steps
@@ -28,8 +28,12 @@ class AgentDreamer:
 
         self.train()
 
-    def _build_model(self, restore):
-
+    def _build_model(self, restore: bool):
+        """Build model and optimizer
+        
+        Args:
+            restore (bool): whether to restore from checkpoint
+        """
         self.rssm = RSSM(
                     action_size = self.action_size,
                     stoch_size = self.args.stoch_size,
@@ -38,7 +42,6 @@ class AgentDreamer:
                     obs_embed_size = self.args.obs_embed_size,
                     activation = self.args.dense_activation_function,
                     discrete = self.args.discrete).to(self.device)
-
         self.actor = ActionDecoder(
                      action_size = self.action_size,
                      stoch_size = self.args.stoch_size,
@@ -119,9 +122,9 @@ class AgentDreamer:
         self.actor_modules = [self.actor]
 
         if restore:
-            self.restore_checkpoint(self.restore_path)
+            self.load_checkpoint(self.restore_path)
 
-    def train(self, training=True):
+    def train(self, training: bool = True):
         self.training = training
         self.rssm.train(training)
         self.actor.train(training)
@@ -133,86 +136,45 @@ class AgentDreamer:
             self.discount_model.train(training)
 
     def reset(self):
+        """Reset the agent state."""
         self.prev_state = self.rssm.init_state(1, self.device)
         self.prev_action = torch.zeros(1, self.action_size).to(self.device)
 
     def select_action(self, obs, explore=False):
-        obs = obs['image']
-        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-        obs_embed = self.obs_encoder(preprocess_obs(obs))
-        _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
-        features = self.rssm.get_feat(posterior)
-        action = self.actor(features, deter = not explore) 
-        if explore:
-            action = self.actor.add_exploration(action, self.args.action_noise)
+        with torch.no_grad():
+            obs = obs['image']
+            obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+            obs_embed = self.obs_encoder(preprocess_obs(obs))
+            _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+            features = self.rssm.get_feat(posterior)
+            action = self.actor(features, deter = not explore) 
+            if explore:
+                action = self.actor.add_exploration(action, self.args.action_noise)
+            print(action.shape)
 
-        self.prev_state = posterior
-        self.prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
-
-        return action
+            self.prev_state = posterior
+            self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
+            
+            return action.cpu().data.numpy().flatten()
     
     def sample_action(self, obs, explore=True):
-        obs = obs['image']
-        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-        obs_embed = self.obs_encoder(preprocess_obs(obs))
-        _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
-        features = self.rssm.get_feat(posterior)
-        action = self.actor(features, deter = not explore) 
-        if explore:
-            action = self.actor.add_exploration(action, self.args.action_noise)
+        with torch.no_grad():
+            obs = obs['image']
+            obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+            obs_embed = self.obs_encoder(preprocess_obs(obs))
+            _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+            features = self.rssm.get_feat(posterior)
+            action = self.actor(features, deter = not explore) 
+            if explore:
+                action = self.actor.add_exploration(action, self.args.action_noise)
 
-        self.prev_state = posterior
-        self.prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
-
-        return action
-
-    '''
-    # def actor_loss(self):
-
-    #     with torch.no_grad():
-    #         posterior = self.rssm.detach_state(self.rssm.seq_to_batch(self.posterior))
-
-    #     with FreezeParameters(self.world_model_modules):
-    #         # imag_states: (bs, 1:T+1, ...), imag_actions: (bs, 0:T, a_dim), imag_feats: (bs, 0:T, e_dim)
-    #         imag_states, imag_actions, imag_feats = self.imagine_rollout(posterior, self.args.imagine_horizon)
-
-    #     self.imag_feat = imag_feats # self.rssm.get_feat(imag_states)
-    #     policy = self.actor(self.imag_feat.detach(), return_dist=True)
-    #     action_entropy = policy.entropy().reshape((-1, 1))
-
-    #     with FreezeParameters(self.world_model_modules + self.value_modules):
-    #         imag_rew_dist = self.reward_model(self.imag_feat)
-
-    #         imag_rews = imag_rew_dist.mean
-    #         if self.args.use_disc_model:
-    #             imag_disc_dist = self.discount_model(self.imag_feat)
-    #             discounts = imag_disc_dist.mean().detach()
-    #         else:
-    #             discounts =  self.args.discount * torch.ones_like(imag_rews).detach()
-    #         target, weight = self.target(self.imag_feat, imag_rews, discounts)
-    #         self.discounts = weight
-    #         self.returns = target
-
-    #     if self.args.actor_grad == 'dynamics':
-    #         objective = target
-    #     elif self.args.actor_grad == 'reinforce':
-    #         baseline = self.critic(self.imag_feat[:-1]).mean
-    #         advantage = (target - baseline).detach()
-    #         objective = policy.log_prob(imag_actions)[:-1].reshape((-1, 1)) * advantage
-    #     elif self.args.actor_grad == 'both':
-    #         baseline = self.critic(self.imag_feat[:-1]).mean
-    #         advantage = (target - baseline).detach()
-    #         objective = policy.log_prob(imag_actions)[:-1].reshape((-1, 1)) * advantage
-    #         mix = schedule(self.args.actor_grad_mix, self.step)
-    #         objective = mix * target + (1 - mix) * objective
-    #     ent_scale = schedule(self.args.actor_ent, self.step)
-    #     objective += ent_scale * action_entropy[:-1]
-    #     actor_loss = -(weight * objective).mean()
-    #     return actor_loss
-    '''
+            self.prev_state = posterior
+            self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
+            # self.prev_action = torch.tensor(action, dtype=torch.float32).to(self.device)
+            
+            return action.cpu().data.numpy().flatten()
 
     def actor_loss(self):
-
         with torch.no_grad():
             posterior = self.rssm.detach_state(self.rssm.seq_to_batch(self.posterior))
 
@@ -367,8 +329,8 @@ class AgentDreamer:
                     d.data = mix * s.data + (1 - mix) * d.data
             self._updates += 1
 
-    def update(self, replay_buffer):
-        obs, acs, rews, terms = replay_buffer.sample()
+    def update(self):
+        obs, acs, rews, terms = self.data_buffer.sample()
         obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
         acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
         rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
@@ -385,52 +347,6 @@ class AgentDreamer:
         loss_dict['value_loss'] = value_loss.item()
         return loss_dict
         return model_loss.item(), actor_loss.item(), value_loss.item()
-
-    def act_with_world_model(self, obs, prev_state, prev_action, explore=False):
-
-        obs = obs['image']
-        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-        obs_embed = self.obs_encoder(preprocess_obs(obs))
-        _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed)
-        features = self.rssm.get_feat(posterior)
-        action = self.actor(features, deter = not explore) 
-        if explore:
-            action = self.actor.add_exploration(action, self.args.action_noise)
-
-        return posterior, action
-
-    def act_and_collect_data(self, env, collect_steps):
-
-        obs = env.reset()
-        done = False
-        prev_state = self.rssm.init_state(1, self.device)
-        prev_action = torch.zeros(1, self.action_size).to(self.device)
-
-        episode_rewards = [0.0]
-
-        for i in range(collect_steps):
-
-            with torch.no_grad():
-                posterior, action = self.act_with_world_model(obs, prev_state, prev_action, explore=True)
-            action = action[0].cpu().numpy()
-            next_obs, rew, done, _ = env.step(action)
-            self.data_buffer.add(obs, action, rew, done)
-
-            episode_rewards[-1] += rew
-
-            if done:
-                obs = env.reset()
-                done = False
-                prev_state = self.rssm.init_state(1, self.device)
-                prev_action = torch.zeros(1, self.action_size).to(self.device)
-                if i != collect_steps - 1:
-                    episode_rewards.append(0.0)
-            else:
-                obs = next_obs 
-                prev_state = posterior
-                prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
-
-        return np.array(episode_rewards)
 
     def evaluate(self, env, eval_episodes, render=False):
 
@@ -481,22 +397,24 @@ class AgentDreamer:
 
         return np.array(seed_episode_rews)
 
-    def save(self, save_path):
-
+    def save_checkpoint(self, checkpoint_path):
+        """Save the model parameters and optimizer to a file."""
         torch.save(
-            {'rssm': self.rssm.state_dict(),
-            'actor': self.actor.state_dict(),
-            'reward_model': self.reward_model.state_dict(),
-            'obs_encoder': self.obs_encoder.state_dict(),
-            'obs_decoder': self.obs_decoder.state_dict(),
+            {'rssm':          self.rssm.state_dict(),
+            'actor':          self.actor.state_dict(),
+            'reward_model':   self.reward_model.state_dict(),
+            'obs_encoder':    self.obs_encoder.state_dict(),
+            'obs_decoder':    self.obs_decoder.state_dict(),
             'discount_model': self.discount_model.state_dict() if self.args.use_disc_model else None,
-            'actor_optimizer': self.actor_opt.state_dict(),
-            'critic_optimizer': self.critic_opt.state_dict(),
-            'world_model_optimizer': self.world_model_opt.state_dict(),}, save_path)
 
-    def restore_checkpoint(self, ckpt_path):
+            'world_model_optimizer': self.world_model_opt.state_dict(),
+            'actor_optimizer':       self.actor_opt.state_dict(),
+            'critic_optimizer':      self.critic_opt.state_dict(),
+            }, checkpoint_path)
 
-        checkpoint = torch.load(ckpt_path)
+    def load_checkpoint(self, checkpoint_path):
+        """Load model parameters from a file."""
+        checkpoint = torch.load(checkpoint_path)
         self.rssm.load_state_dict(checkpoint['rssm'])
         self.actor.load_state_dict(checkpoint['actor'])
         self.reward_model.load_state_dict(checkpoint['reward_model'])
@@ -509,8 +427,13 @@ class AgentDreamer:
         self.actor_opt.load_state_dict(checkpoint['actor_optimizer'])
         self.critic_opt.load_state_dict(checkpoint['critic_optimizer'])
 
-    def set_step(self, step):
-        self.step = step
+    def save_data_buffer(self, data_buffer_path):
+        """Save the data buffer to a file."""
+        self.data_buffer.save(data_buffer_path)
+
+    def load_data_buffer(self, data_buffer_path):
+        """Load the data buffer from a file."""
+        self.data_buffer.load(data_buffer_path)
 
     def video_pred(self, obs, acs):
         '''
@@ -544,3 +467,99 @@ class AgentDreamer:
         video = torch.cat([truth, model, error], 3)  # on H
         B, T, C, H, W = video.shape  # batch, time, height,width, channels
         return video.permute(1, 2, 3, 0, 4).reshape(T, C, H, B * W)
+    
+
+    '''
+    # def actor_loss(self):
+
+    #     with torch.no_grad():
+    #         posterior = self.rssm.detach_state(self.rssm.seq_to_batch(self.posterior))
+
+    #     with FreezeParameters(self.world_model_modules):
+    #         # imag_states: (bs, 1:T+1, ...), imag_actions: (bs, 0:T, a_dim), imag_feats: (bs, 0:T, e_dim)
+    #         imag_states, imag_actions, imag_feats = self.imagine_rollout(posterior, self.args.imagine_horizon)
+
+    #     self.imag_feat = imag_feats # self.rssm.get_feat(imag_states)
+    #     policy = self.actor(self.imag_feat.detach(), return_dist=True)
+    #     action_entropy = policy.entropy().reshape((-1, 1))
+
+    #     with FreezeParameters(self.world_model_modules + self.value_modules):
+    #         imag_rew_dist = self.reward_model(self.imag_feat)
+
+    #         imag_rews = imag_rew_dist.mean
+    #         if self.args.use_disc_model:
+    #             imag_disc_dist = self.discount_model(self.imag_feat)
+    #             discounts = imag_disc_dist.mean().detach()
+    #         else:
+    #             discounts =  self.args.discount * torch.ones_like(imag_rews).detach()
+    #         target, weight = self.target(self.imag_feat, imag_rews, discounts)
+    #         self.discounts = weight
+    #         self.returns = target
+
+    #     if self.args.actor_grad == 'dynamics':
+    #         objective = target
+    #     elif self.args.actor_grad == 'reinforce':
+    #         baseline = self.critic(self.imag_feat[:-1]).mean
+    #         advantage = (target - baseline).detach()
+    #         objective = policy.log_prob(imag_actions)[:-1].reshape((-1, 1)) * advantage
+    #     elif self.args.actor_grad == 'both':
+    #         baseline = self.critic(self.imag_feat[:-1]).mean
+    #         advantage = (target - baseline).detach()
+    #         objective = policy.log_prob(imag_actions)[:-1].reshape((-1, 1)) * advantage
+    #         mix = schedule(self.args.actor_grad_mix, self.step)
+    #         objective = mix * target + (1 - mix) * objective
+    #     ent_scale = schedule(self.args.actor_ent, self.step)
+    #     objective += ent_scale * action_entropy[:-1]
+    #     actor_loss = -(weight * objective).mean()
+    #     return actor_loss
+
+    # def set_step(self, step):
+    #     self.step = step
+
+    
+    def act_with_world_model(self, obs, prev_state, prev_action, explore=False):
+
+        obs = obs['image']
+        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.obs_encoder(preprocess_obs(obs))
+        _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed)
+        features = self.rssm.get_feat(posterior)
+        action = self.actor(features, deter = not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
+
+        return posterior, action
+
+    def act_and_collect_data(self, env, collect_steps):
+
+        obs = env.reset()
+        done = False
+        prev_state = self.rssm.init_state(1, self.device)
+        prev_action = torch.zeros(1, self.action_size).to(self.device)
+
+        episode_rewards = [0.0]
+
+        for i in range(collect_steps):
+
+            with torch.no_grad():
+                posterior, action = self.act_with_world_model(obs, prev_state, prev_action, explore=True)
+            action = action[0].cpu().numpy()
+            next_obs, rew, done, _ = env.step(action)
+            self.data_buffer.add(obs, action, rew, done)
+
+            episode_rewards[-1] += rew
+
+            if done:
+                obs = env.reset()
+                done = False
+                prev_state = self.rssm.init_state(1, self.device)
+                prev_action = torch.zeros(1, self.action_size).to(self.device)
+                if i != collect_steps - 1:
+                    episode_rewards.append(0.0)
+            else:
+                obs = next_obs 
+                prev_state = posterior
+                prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
+
+        return np.array(episode_rewards)
+    '''
