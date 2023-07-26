@@ -48,7 +48,9 @@ def get_args():
     # Data parameters
     parser.add_argument('--max-episode-length', type=int, default=1000, help='Max episode length')
     parser.add_argument('--buffer-size', type=int, default=1000000, help='Experience replay size')  # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
-    
+    parser.add_argument('--batch-size', type=int, default=50, help='batch size')
+    parser.add_argument('--train-seq-len', type=int, default=50, help='sequence length for training world model')
+
     # Models parameters
     parser.add_argument('--cnn-activation-function', type=str, default='relu', help='Model activation function for a convolution layer')
     parser.add_argument('--dense-activation-function', type=str, default='elu', help='Model activation function a dense layer')
@@ -75,8 +77,6 @@ def get_args():
     parser.add_argument('--update-steps', type=int, default=100, help='num of train update steps per iter')
     parser.add_argument('--num-reward-opt-iters', type=int, default=10, help='num of reward opt steps per iter; used for TIA')
     parser.add_argument('--collect-steps', type=int, default=1000, help='actor collect steps per 1 train iter')
-    parser.add_argument('--batch-size', type=int, default=50, help='batch size')
-    parser.add_argument('--train-seq-len', type=int, default=50, help='sequence length for training world model')
     parser.add_argument('--imagine-horizon', type=int, default=15, help='Latent imagination horizon')
     parser.add_argument('--use-disc-model', action='store_true', default=False, help='whether to use discount model' )
     
@@ -186,7 +186,7 @@ def main():
     train_env = envs.make_env(args)
     test_env  = envs.make_env(args)
     obs_shape = train_env.observation_space['image'].shape
-    action_shape = train_env.action_space.shape[0]
+    action_shape = train_env.action_space.shape
 
     # make evaluation function
     # evaluate = make_eval(args.agent)

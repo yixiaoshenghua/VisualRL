@@ -25,7 +25,7 @@ def make_env(args):
     env = ActionRepeat(env, args.action_repeat)
     env = NormalizeActions(env)
     env = TimeLimit(env, args.time_limit / args.action_repeat)
-    # env = FrameStack(env, args.frame_stack) # TODO 参考FrameStack中具体问题
+    env = FrameStack(env, args.frame_stack) # TODO 参考FrameStack中具体问题
     #env = RewardObs(env)
     return env
 
@@ -510,11 +510,13 @@ class FrameStack: # TODO 加了FrameStack后，DeepMindControl的observation_spa
         self._k = k
         self._frames = deque([], maxlen=k)
         shp = env.observation_space['image'].shape # origin: shp = env.observation_space.shape, NoneType Object
-        self.observation_space = gym.spaces.Box(
+        spaces = self.observation_space
+        spaces['image'] = gym.spaces.Box(
             low=0,
             high=1,
             shape=((shp[0] * k,) + shp[1:]),
             dtype=env.observation_space['image'].dtype) # origin: dtype=env.observation_space.dtype
+        self.observation_space = gym.spaces.Dict(spaces)
         # self._max_episode_steps = env._max_episode_steps # TODO AttributeError: 'DeepMindControl' object has no attribute '_max_episode_steps'. Not used
 
     def __getattr__(self, name):
@@ -524,12 +526,14 @@ class FrameStack: # TODO 加了FrameStack后，DeepMindControl的observation_spa
         obs = self._env.reset()
         for _ in range(self._k):
             self._frames.append(obs['image']) # origin: self._frames.append(obs) # ValueError in self._get_obs np.concatenate: zero-dimensional arrays cannot be concatenated
-        return self._get_obs()
+        obs['image'] = self._get_obs()
+        return obs
 
     def step(self, action):
         obs, reward, done, info = self._env.step(action)
         self._frames.append(obs['image']) # origin: self._frames.append(obs) # ValueError in self._get_obs np.concatenate: zero-dimensional arrays cannot be concatenated
-        return self._get_obs(), reward, done, info
+        obs['image'] = self._get_obs()
+        return obs, reward, done, info
 
     def _get_obs(self):
         assert len(self._frames) == self._k

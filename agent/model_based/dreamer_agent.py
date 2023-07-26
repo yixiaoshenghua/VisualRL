@@ -4,25 +4,27 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.distributions as distributions
 
-from utils.replay_buffer import MBReplayBuffer
+from utils.replay_buffer import CPCReplayBuffer
 from model.models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
 from utils import FreezeParameters, compute_return, preprocess_obs
 
 
 class AgentDreamer:
 
-    def __init__(self, args, obs_shape, action_size, device, restore=False):
+    def __init__(self, args, obs_shape, action_shape, device, restore=False):
 
         self.args = args
         if self.args.actor_grad == 'auto':
             self.args.actor_grad = 'dynamics' if self.args.agent == 'Dreamerv1' else 'reinforce'
         self.obs_shape = obs_shape
-        self.action_size = action_size
+        self.action_shape = action_shape
+        self.action_size = action_shape[0]
         self.device = device
         self.restore = restore
         self.restore_path = args.restore_checkpoint_path
-        self.data_buffer = MBReplayBuffer(self.args.buffer_size, self.obs_shape, self.action_size,
-                                                    self.args.train_seq_len, self.args.batch_size)
+        self.data_buffer = CPCReplayBuffer(self.obs_shape, self.action_shape,
+                                           self.args.buffer_size, self.args.batch_size, 
+                                           self.device, self.args.train_seq_len)
         self.step = args.init_steps
         self._build_model(restore=self.restore)
 
@@ -329,11 +331,7 @@ class AgentDreamer:
             self._updates += 1
 
     def update(self):
-        obs, acs, rews, terms = self.data_buffer.sample()
-        obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
-        acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
-        rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
-        nonterms = torch.tensor((1.0-terms), dtype=torch.float32).to(self.device).unsqueeze(-1)
+        obs, acs, rews, nonterms = self.data_buffer.sample_dreamer()
 
         model_loss = self.update_world_model(obs, acs, rews, nonterms)
         actor_loss = self.update_actor()

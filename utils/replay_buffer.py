@@ -9,66 +9,17 @@ import kornia
 import copy
 from utils.data_augs import center_crop_images, random_crop
 
-class MBReplayBuffer:
-
-    def __init__(self, size, obs_shape, action_size, seq_len, batch_size):
-
-        self.size = size
-        self.obs_shape = obs_shape
-        self.action_size = action_size
-        self.seq_len = seq_len
-        self.batch_size = batch_size
-        self.idx = 0
-        self.full = False
-        self.observations = np.empty((size, *obs_shape), dtype=np.uint8) 
-        self.actions = np.empty((size, action_size), dtype=np.float32)
-        self.rewards = np.empty((size,), dtype=np.float32) 
-        self.terminals = np.empty((size,), dtype=np.float32)
-        self.steps, self.episodes = 0, 0
-    
-    def add(self, obs, ac, rew, done):
-
-        self.observations[self.idx] = obs['image']
-        self.actions[self.idx] = ac
-        self.rewards[self.idx] = rew
-        self.terminals[self.idx] = done
-        self.idx = (self.idx + 1) % self.size
-        self.full = self.full or self.idx == 0
-        self.steps += 1 
-        self.episodes = self.episodes + (1 if done else 0)
-
-    def _sample_idx(self, L):
-
-        valid_idx = False
-        while not valid_idx:
-            idx = np.random.randint(0, self.size if self.full else self.idx - L)
-            idxs = np.arange(idx, idx + L) % self.size
-            valid_idx = not self.idx in idxs[1:] 
-        return idxs
-
-    def _retrieve_batch(self, idxs, n, L):
-        
-        vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
-        observations = self.observations[vec_idxs]
-        return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.terminals[vec_idxs].reshape(L, n)
-
-    def sample(self):
-        n = self.batch_size
-        l = self.seq_len
-        obs, acs, rews, terms= self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
-        return obs, acs, rews, terms
-
-    def save(self, save_dir):
-        pass
 
 class CPCReplayBuffer(Dataset):
     """Buffer to store environment transitions."""
     def __init__(
         self, obs_shape, action_shape, capacity, batch_size, device,
+        seq_len = None,
         path_len=None, image_size=84, transform=None
     ):
         self.capacity = capacity
         self.batch_size = batch_size
+        self.seq_len = seq_len
         self.device = device
         self.image_size = image_size
         self.transform = transform
@@ -88,10 +39,10 @@ class CPCReplayBuffer(Dataset):
 
     def add(self, obs, action, reward, next_obs, done, done_bool):
 
-        np.copyto(self.obses[self.idx], obs)
+        np.copyto(self.obses[self.idx], obs['image'])
         np.copyto(self.actions[self.idx], action)
         np.copyto(self.rewards[self.idx], reward)
-        np.copyto(self.next_obses[self.idx], next_obs)
+        np.copyto(self.next_obses[self.idx], next_obs['image'])
         np.copyto(self.not_dones[self.idx], not done_bool)
 
         self.idx = (self.idx + 1) % self.capacity
@@ -198,6 +149,31 @@ class CPCReplayBuffer(Dataset):
             .reshape(L, n)
 
         return obses, actions, rewards, not_dones
+    
+    def _sample_idx(self, L):
+
+        valid_idx = False
+        while not valid_idx:
+            idx = np.random.randint(0, self.capacity if self.full else self.idx - L)
+            idxs = np.arange(idx, idx + L) % self.capacity
+            valid_idx = not self.idx in idxs[1:] 
+        return idxs
+
+    def _retrieve_batch(self, idxs, n, L):
+        
+        vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
+        observations = self.obses[vec_idxs]
+        return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.not_dones[vec_idxs].reshape(L, n)
+
+    def sample_dreamer(self):
+        n = self.batch_size
+        l = self.seq_len
+        obs, acs, rews, terms = self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
+        obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
+        acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
+        rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
+        nonterms = torch.tensor((1.0-terms), dtype=torch.float32).to(self.device).unsqueeze(-1)
+        return obs, acs, rews, nonterms
 
     def sample(self, k=False):
         idxs = np.random.randint(
@@ -520,3 +496,55 @@ class AugReplayBuffer(object):
         next_obses_aug = self.aug_trans(next_obses_aug)
 
         return obses, actions, rewards, next_obses, not_dones_no_max, obses_aug, next_obses_aug
+
+# class MBReplayBuffer:
+
+#     def __init__(self, size, obs_shape, action_size, seq_len, batch_size):
+
+#         self.size = size
+#         self.obs_shape = obs_shape
+#         self.action_size = action_size
+#         self.seq_len = seq_len
+#         self.batch_size = batch_size
+#         self.idx = 0
+#         self.full = False
+#         self.observations = np.empty((size, *obs_shape), dtype=np.uint8) 
+#         self.actions = np.empty((size, action_size), dtype=np.float32)
+#         self.rewards = np.empty((size,), dtype=np.float32) 
+#         self.terminals = np.empty((size,), dtype=np.float32)
+#         self.steps, self.episodes = 0, 0
+    
+#     def add(self, obs, ac, rew, done):
+
+#         self.observations[self.idx] = obs['image']
+#         self.actions[self.idx] = ac
+#         self.rewards[self.idx] = rew
+#         self.terminals[self.idx] = done
+#         self.idx = (self.idx + 1) % self.size
+#         self.full = self.full or self.idx == 0
+#         self.steps += 1 
+#         self.episodes = self.episodes + (1 if done else 0)
+
+#     def _sample_idx(self, L):
+
+#         valid_idx = False
+#         while not valid_idx:
+#             idx = np.random.randint(0, self.size if self.full else self.idx - L)
+#             idxs = np.arange(idx, idx + L) % self.size
+#             valid_idx = not self.idx in idxs[1:] 
+#         return idxs
+
+#     def _retrieve_batch(self, idxs, n, L):
+        
+#         vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
+#         observations = self.observations[vec_idxs]
+#         return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.terminals[vec_idxs].reshape(L, n)
+
+#     def sample(self):
+#         n = self.batch_size
+#         l = self.seq_len
+#         obs, acs, rews, terms= self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
+#         return obs, acs, rews, terms
+
+#     def save(self, save_dir):
+#         pass
