@@ -158,13 +158,13 @@ class MBLogger:
         self._n_logged_samples = n_logged_samples
         self._summ_writer = SummaryWriter(log_dir, flush_secs=1, max_queue=1)
 
-    def log_scalar(self, scalar, name, step_):
+    def log_scalar(self, name, scalar, step_):
         self._summ_writer.add_scalar('{}'.format(name), scalar, step_)
 
     def log_scalars(self, scalar_dict, step):
         for key, value in scalar_dict.items():
-            print('{} : {}'.format(key, value))
-            self.log_scalar(value, key, step)
+            # print('{} : {}'.format(key, value))
+            self.log_scalar(key, value, step)
         self.dump_scalars_to_pickle(scalar_dict, step)
 
     def log_videos(self, videos, step, max_videos_to_save=1, fps=20, video_title='video'):

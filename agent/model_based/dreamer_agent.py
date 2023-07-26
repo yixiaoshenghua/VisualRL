@@ -140,39 +140,38 @@ class AgentDreamer:
         self.prev_state = self.rssm.init_state(1, self.device)
         self.prev_action = torch.zeros(1, self.action_size).to(self.device)
 
+    @torch.no_grad()
     def select_action(self, obs, explore=False):
-        with torch.no_grad():
-            obs = obs['image']
-            obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-            obs_embed = self.obs_encoder(preprocess_obs(obs))
-            _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
-            features = self.rssm.get_feat(posterior)
-            action = self.actor(features, deter = not explore) 
-            if explore:
-                action = self.actor.add_exploration(action, self.args.action_noise)
-            print(action.shape)
+        obs = obs['image']
+        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.obs_encoder(preprocess_obs(obs))
+        _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+        features = self.rssm.get_feat(posterior)
+        action = self.actor(features, deter = not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
 
-            self.prev_state = posterior
-            self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
-            
-            return action.cpu().data.numpy().flatten()
+        self.prev_state = posterior
+        self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
+        
+        return action.cpu().data.numpy().flatten()
     
+    @torch.no_grad()
     def sample_action(self, obs, explore=True):
-        with torch.no_grad():
-            obs = obs['image']
-            obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-            obs_embed = self.obs_encoder(preprocess_obs(obs))
-            _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
-            features = self.rssm.get_feat(posterior)
-            action = self.actor(features, deter = not explore) 
-            if explore:
-                action = self.actor.add_exploration(action, self.args.action_noise)
+        obs = obs['image']
+        obs = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.obs_encoder(preprocess_obs(obs))
+        _, posterior = self.rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+        features = self.rssm.get_feat(posterior)
+        action = self.actor(features, deter = not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
 
-            self.prev_state = posterior
-            self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
-            # self.prev_action = torch.tensor(action, dtype=torch.float32).to(self.device)
-            
-            return action.cpu().data.numpy().flatten()
+        self.prev_state = posterior
+        self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
+        # self.prev_action = torch.tensor(action, dtype=torch.float32).to(self.device)
+        
+        return action.cpu().data.numpy().flatten()
 
     def actor_loss(self):
         with torch.no_grad():
@@ -342,9 +341,9 @@ class AgentDreamer:
         self.update_slow_target()
 
         loss_dict = {}
-        loss_dict['model_loss'] = model_loss.item()
-        loss_dict['actor_loss'] = actor_loss.item()
-        loss_dict['value_loss'] = value_loss.item()
+        loss_dict['train/model_loss'] = model_loss.item()
+        loss_dict['train/actor_loss'] = actor_loss.item()
+        loss_dict['train/value_loss'] = value_loss.item()
         return loss_dict
         return model_loss.item(), actor_loss.item(), value_loss.item()
 
@@ -391,7 +390,7 @@ class AgentDreamer:
                 obs = env.reset()
                 if i != seed_steps - 1:
                     seed_episode_rews.append(0.0)
-                done = False  
+                done = False
             else:
                 obs = next_obs
 

@@ -9,7 +9,7 @@ import torch
 from collections import OrderedDict
 import envs
 
-from utils.logger import MBLogger
+from utils.logger import MBLogger, Logger
 from utils.video import VideoRecorder
 import utils
 
@@ -73,6 +73,7 @@ def get_args():
     parser.add_argument('--total-steps', type=int, default=int(1e6), help='total number of training steps')
     parser.add_argument('--init-steps', type=int, default=5000, help='seed episodes')
     parser.add_argument('--update-steps', type=int, default=100, help='num of train update steps per iter')
+    parser.add_argument('--num-reward-opt-iters', type=int, default=10, help='num of reward opt steps per iter; used for TIA')
     parser.add_argument('--collect-steps', type=int, default=1000, help='actor collect steps per 1 train iter')
     parser.add_argument('--batch-size', type=int, default=50, help='batch size')
     parser.add_argument('--train-seq-len', type=int, default=50, help='sequence length for training world model')
@@ -86,11 +87,15 @@ def get_args():
     parser.add_argument('--kl-loss-coeff', type=float, default=1.0, help='weightage for kl_loss of model')
     parser.add_argument('--kl-alpha', type=float, default=0.8, help='kl balancing weight; used for Dreamerv2')
     parser.add_argument('--disc-loss-coeff', type=float, default=10.0, help='weightage of discount model')
+    parser.add_argument('--disen-kl-loss-coeff', type=float, default=1.0, help='weightage of disentangled kl loss; used for TIA')
+    parser.add_argument('--disen-rec-loss-coeff', type=float, default=1.0, help='weightage of disentangled reconstruction loss; used for TIA')
+    parser.add_argument('--disen-neg-rew-loss-coeff', type=float, default=1.0, help='weightage of disentangled negative reward loss; used for TIA')
     
     # Optimizer Parameters
-    parser.add_argument('--model_learning-rate', type=float, default=6e-4, help='World Model Learning rate') 
-    parser.add_argument('--actor_learning-rate', type=float, default=8e-5, help='Actor Learning rate') 
-    parser.add_argument('--value_learning-rate', type=float, default=8e-5, help='Value Model Learning rate')
+    parser.add_argument('--model-learning-rate', type=float, default=6e-4, help='World Model Learning rate') 
+    parser.add_argument('--actor-learning-rate', type=float, default=8e-5, help='Actor Learning rate') 
+    parser.add_argument('--value-learning-rate', type=float, default=8e-5, help='Value Model Learning rate')
+    parser.add_argument('--disen-reward-learning-rate', type=float, default=8e-5, help='Disentangled Reward Model Learning rate; used for TIA')
     parser.add_argument('--adam-epsilon', type=float, default=1e-7, help='Adam optimizer epsilon value') 
     parser.add_argument('--grad-clip-norm', type=float, default=100.0, help='Gradient clipping norm')
     parser.add_argument('--slow-target', default=False, action='store_true', help='whether to use slow target value model')
@@ -123,7 +128,7 @@ def get_args():
     return args
 
 def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
-    if args.agent == 'Dreamerv1':
+    if args.agent == 'Dreamerv1' or args.agent == 'Dreamerv2':
         agent = AgentDreamer(args, obs_shape, action_shape, device, args.restore_checkpoint)
     elif args.agent == 'TIA':
         agent = AgentTIA(args, obs_shape, action_shape, device, args.restore_checkpoint)
@@ -132,13 +137,13 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
 class TMP_Logger:
     def __init__(self):
         pass
-    def log(self, dic):
+    def log_scalar(self, dic):
         print(dic)
     def log_scalar(self, name, value, step):
         print(name, value, step)
 
 def make_log(args, logdir):
-    return TMP_Logger()
+    # return TMP_Logger()
     return MBLogger(logdir)
 
 def make_logdir(args):
@@ -214,7 +219,7 @@ def main():
             num_updates = args.init_steps*args.update_steps if step == args.init_steps else args.update_steps
             for _ in range(num_updates):
                 agent_update_dict = agent.update()
-            L.log(agent_update_dict)
+            L.log_scalars(agent_update_dict, step)
 
         # get action
         if step < args.init_steps:

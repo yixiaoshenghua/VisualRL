@@ -20,11 +20,11 @@ class AgentTIA:
         self.obs_shape = obs_shape
         self.action_size = action_size
         self.device = device
-        self.restore = args.restore
-        self.restore_path = args.checkpoint_path
+        self.restore = restore
+        self.restore_path = args.restore_checkpoint_path
         self.data_buffer = MBReplayBuffer(self.args.buffer_size, self.obs_shape, self.action_size,
                                                     self.args.train_seq_len, self.args.batch_size)
-        self.step = args.seed_steps
+        self.step = args.init_steps
         self._build_model(restore=self.restore)
 
     def _build_model(self, restore):
@@ -37,9 +37,10 @@ class AgentTIA:
                     obs_embed_size = self.args.obs_embed_size,
                     activation = self.args.dense_activation_function,
                     discrete = self.args.discrete,
-                    future=self.args.rssm_attention,
-                    reverse=self.args.rssm_reverse,
-                    device=self.device).to(self.device)
+                    # future=self.args.rssm_attention,
+                    # reverse=self.args.rssm_reverse,
+                    # device=self.device
+                    ).to(self.device)
         self.disen_rssm = RSSM(
                     action_size =self.action_size,
                     stoch_size = self.args.stoch_size,
@@ -48,9 +49,10 @@ class AgentTIA:
                     obs_embed_size = self.args.obs_embed_size,
                     activation = self.args.dense_activation_function,
                     discrete = self.args.discrete,
-                    future=self.args.rssm_attention,
-                    reverse=self.args.rssm_reverse,
-                    device=self.device).to(self.device)
+                    # future=self.args.rssm_attention,
+                    # reverse=self.args.rssm_reverse,
+                    # device=self.device
+                    ).to(self.device)
         self.actor = ActionDecoder(
                      action_size = self.action_size,
                      stoch_size = self.args.stoch_size,
@@ -168,6 +170,63 @@ class AgentTIA:
 
         if restore:
             self.load(self.restore_path)
+
+    def train(self, training: bool = True):
+        self.trainging = training
+
+        self.main_rssm.train(training)
+        self.disen_rssm.train(training)
+
+        self.main_obs_encoder.train(training)
+        self.main_obs_decoder.train(training)
+        self.disen_obs_encoder.train(training)
+        self.disen_obs_decoder.train(training)
+        self.disen_only_obs_decoder.train(training)
+        self.joint_obs_decoder.train(training)
+
+        self.main_reward_model.train(training)
+        self.disen_reward_model.train(training)
+
+        self.critic.train(training)
+        self.actor.train(training)
+        
+        if self.args.use_disc_model:
+            self.discount_model.train(training)
+
+    def reset(self):
+        """Reset the agent."""
+        self.prev_state = self.main_rssm.init_state(1, self.device)
+        self.prev_action = torch.zeros(1, self.action_size).to(self.device)
+
+    @torch.no_grad()
+    def select_action(self, obs, explore=False):
+        obs = obs['image']
+        obs = torch.tensor(obs, dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.main_obs_encoder(preprocess_obs(obs))
+        _, posterior = self.main_rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+        features = self.main_rssm.get_feat(posterior)
+        action = self.actor(features, deter = not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
+
+        self.prev_state = posterior
+        self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
+        return action.cpu().data.numpy().flatten()
+    
+    @torch.no_grad()
+    def sample_action(self, obs, explore=True):
+        obs = obs['image']
+        obs = torch.tensor(obs, dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.main_obs_encoder(preprocess_obs(obs))
+        _, posterior = self.main_rssm.observe_step(self.prev_state, self.prev_action, obs_embed)
+        features = self.main_rssm.get_feat(posterior)
+        action = self.actor(features, deter = not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
+
+        self.prev_state = posterior
+        self.prev_action = action.clone().detach().to(dtype=torch.float32).to(self.device)
+        return action.cpu().data.numpy().flatten()
 
     def actor_loss(self):
         loss_dict, log_dict = {}, {}
@@ -382,52 +441,6 @@ class AgentTIA:
 
         return log_dict
 
-    def act_with_world_model(self, obs, prev_state, prev_action, explore=False):
-
-        obs = obs['image']
-        obs  = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-        obs_embed = self.main_obs_encoder(preprocess_obs(obs))
-        _, posterior = self.main_rssm.observe_step(prev_state, prev_action, obs_embed)
-        features = self.main_rssm.get_feat(posterior)
-        action = self.actor(features, deter=not explore) 
-        if explore:
-            action = self.actor.add_exploration(action, self.args.action_noise)
-
-        return  posterior, action
-
-    def act_and_collect_data(self, env, collect_steps):
-
-        obs = env.reset()
-        done = False
-        prev_state = self.main_rssm.init_state(1, self.device)
-        prev_action = torch.zeros(1, self.action_size).to(self.device)
-
-        episode_rewards = [0.0]
-
-        for i in range(collect_steps):
-
-            with torch.no_grad():
-                posterior, action = self.act_with_world_model(obs, prev_state, prev_action, explore=True)
-            action = action[0].cpu().numpy()
-            next_obs, rew, done, _ = env.step(action)
-            self.data_buffer.add(obs, action, rew, done)
-
-            episode_rewards[-1] += rew
-
-            if done:
-                obs = env.reset()
-                done = False
-                prev_state = self.main_rssm.init_state(1, self.device)
-                prev_action = torch.zeros(1, self.action_size).to(self.device)
-                if i!= collect_steps-1:
-                    episode_rewards.append(0.0)
-            else:
-                obs = next_obs 
-                prev_state = posterior
-                prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
-
-        return np.array(episode_rewards)
-
     def imagine(self, prev_state, horizon):
 
         rssm_state = prev_state
@@ -506,7 +519,7 @@ class AgentTIA:
 
         return np.array(seed_episode_rews)
 
-    def save(self, save_path):
+    def save_checkpoint(self, checkpoint_path):
 
         torch.save(
             {'main_rssm' : self.main_rssm.state_dict(),
@@ -525,11 +538,11 @@ class AgentTIA:
             'world_model_optimizer': self.world_model_opt.state_dict(),
             'disen_model_optimizer': self.disen_model_opt.state_dict(),
             'disen_reward_optimizer': self.disen_reward_opt.state_dict(),
-            'decoder_optimizer': self.decoder_opt.state_dict()}, save_path)
+            'decoder_optimizer': self.decoder_opt.state_dict()}, checkpoint_path)
 
-    def load(self, ckpt_path):
+    def load_checkpoint(self, checkpoint_path):
 
-        checkpoint = torch.load(ckpt_path)
+        checkpoint = torch.load(checkpoint_path)
         self.main_rssm.load_state_dict(checkpoint['main_rssm'])
         self.actor.load_state_dict(checkpoint['actor'])
         self.critic.load_state_dict(checkpoint['critic'])
@@ -549,6 +562,14 @@ class AgentTIA:
         self.disen_model_opt.load_state_dict(checkpoint['disen_model_optimizer'])
         self.disen_reward_opt.load_state_dict(checkpoint['disen_reward_optimizer'])
         self.decoder_opt.load_state_dict(checkpoint['decoder_optimizer'])
+
+    def save_data_buffer(self, data_buffer_path):
+        """Save the data buffer to a file."""
+        self.data_buffer.save(data_buffer_path)
+
+    def load_data_buffer(self, data_buffer_path):
+        """Load the data buffer from a file."""
+        self.data_buffer.load(data_buffer_path)
 
     def set_step(self, step):
         self.step = step
@@ -648,3 +669,52 @@ class AgentTIA:
         
         return {'joint':joint_video.permute(1, 0, 2, 3, 4), 'main':main_video.permute(1, 0, 2, 3, 4), 'disen':disen_video.permute(1, 0, 2, 3, 4), 'disen_only':disen_only_video.permute(1, 0, 2, 3, 4)}
     
+    """
+    def act_with_world_model(self, obs, prev_state, prev_action, explore=False):
+
+        obs = obs['image']
+        obs  = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.main_obs_encoder(preprocess_obs(obs))
+        _, posterior = self.main_rssm.observe_step(prev_state, prev_action, obs_embed)
+        features = self.main_rssm.get_feat(posterior)
+        action = self.actor(features, deter=not explore) 
+        if explore:
+            action = self.actor.add_exploration(action, self.args.action_noise)
+
+        return  posterior, action
+
+
+    def act_and_collect_data(self, env, collect_steps):
+
+        obs = env.reset()
+        done = False
+        prev_state = self.main_rssm.init_state(1, self.device)
+        prev_action = torch.zeros(1, self.action_size).to(self.device)
+
+        episode_rewards = [0.0]
+
+        for i in range(collect_steps):
+
+            with torch.no_grad():
+                posterior, action = self.act_with_world_model(obs, prev_state, prev_action, explore=True)
+            action = action[0].cpu().numpy()
+            next_obs, rew, done, _ = env.step(action)
+            self.data_buffer.add(obs, action, rew, done)
+
+            episode_rewards[-1] += rew
+
+            if done:
+                obs = env.reset()
+                done = False
+                prev_state = self.main_rssm.init_state(1, self.device)
+                prev_action = torch.zeros(1, self.action_size).to(self.device)
+                if i!= collect_steps-1:
+                    episode_rewards.append(0.0)
+            else:
+                obs = next_obs 
+                prev_state = posterior
+                prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
+
+        return np.array(episode_rewards)
+
+    """
