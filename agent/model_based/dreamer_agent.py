@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -176,6 +177,7 @@ class AgentDreamer:
         return action.cpu().data.numpy().flatten()
 
     def actor_loss(self):
+        loss_dict, log_dict = {}, {}
         with torch.no_grad():
             posterior = self.rssm.detach_state(self.rssm.seq_to_batch(self.posterior))
 
@@ -202,7 +204,24 @@ class AgentDreamer:
         discounts = torch.cat([torch.ones_like(discounts[:1]), discounts[1:-1]], 0)
         self.discounts = torch.cumprod(discounts, 0).detach()
         actor_loss = -torch.mean(self.discounts * self.returns)
-        return actor_loss
+
+        loss_dict['actor_loss'] = actor_loss
+        log_dict['train/actor_loss'] = actor_loss.item()
+        return loss_dict, log_dict
+
+    def critic_loss(self):
+        loss_dict, log_dict = {}, {}
+        with torch.no_grad():
+            value_feat = self.imag_feat[:-1].detach()
+            # discount   = self.discounts.detach() # TODO not use
+            value_targ = self.returns.detach()
+
+        value_dist = self.critic(value_feat)  
+        value_loss = -torch.mean(self.discounts * value_dist.log_prob(value_targ).unsqueeze(-1))
+
+        loss_dict['value_loss'] = value_loss
+        log_dict['train/value_loss'] = value_loss.item()
+        return loss_dict, log_dict
 
     def target(self, feat, reward, disc):
         if self.args.slow_target:
@@ -236,6 +255,7 @@ class AgentDreamer:
         return next_states, actions, features
 
     def _kl_loss(self, prior):
+        loss_dict, log_dict = {}, {}
         prior_dist = self.rssm.get_dist(prior)
         post_dist = self.rssm.get_dist(self.posterior)
 
@@ -250,24 +270,40 @@ class AgentDreamer:
         else:
             kl_loss = torch.mean(distributions.kl.kl_divergence(post_dist, prior_dist))
             kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), self.args.free_nats))
-        return kl_loss
+
+        loss_dict['kl_loss'] = kl_loss
+        log_dict['world_model/kl_loss'] = kl_loss.item()
+        return loss_dict, log_dict
 
     def _reward_loss(self, rews, features):
+        loss_dict, log_dict = {}, {}
         rew_dist = self.reward_model(features)
         rew_loss = -torch.mean(rew_dist.log_prob(rews[:-1]))
-        return rew_loss
+
+        loss_dict['rew_loss'] = rew_loss
+        log_dict['world_model/rew_loss'] = rew_loss.item()
+        return loss_dict, log_dict
 
     def _obs_loss(self, obs, features):
+        loss_dict, log_dict = {}, {}
         obs_dist = self.obs_decoder(features)
         obs_loss = -torch.mean(obs_dist.log_prob(obs[1:]))
-        return obs_loss
+
+        loss_dict['obs_loss'] = obs_loss
+        log_dict['world_model/obs_loss'] = obs_loss.item()
+        return loss_dict, log_dict
     
     def _disc_loss(self, nonterms, features):
+        loss_dict, log_dict = {}, {}
         disc_dist = self.discount_model(features)
         disc_loss = -torch.mean(disc_dist.log_prob(nonterms[:-1]))
-        return disc_loss
+        
+        loss_dict['disc_loss'] = disc_loss
+        log_dict['world_model/disc_loss'] = disc_loss.item()
+        return loss_dict, log_dict
 
     def world_model_loss(self, obs, acs, rews, nonterms):
+        loss_dict, log_dict = {}, {}
 
         obs = preprocess_obs(obs)
         obs_embed = self.obs_encoder(obs[1:])
@@ -275,51 +311,60 @@ class AgentDreamer:
         prior, self.posterior = self.rssm.observe_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args.train_seq_len-1)
         features = self.rssm.get_feat(self.posterior)
         
-        rew_loss = self._reward_loss(rews, features)
-        obs_loss = self._obs_loss(obs, features)
+        rew_loss_dict, rew_log_dict = self._reward_loss(rews, features)
+        obs_loss_dict, obs_log_dict = self._obs_loss(obs, features)
+        kl_loss_dict, kl_log_dict = self._kl_loss(prior)
 
-        kl_loss = self._kl_loss(prior)
+        rew_loss = rew_loss_dict['rew_loss']
+        obs_loss = obs_loss_dict['obs_loss']
+        kl_loss = kl_loss_dict['kl_loss']
 
         if self.args.use_disc_model:
-            disc_loss = self._disc_loss(nonterms, features)
+            disc_loss_dict, disc_log_dict = self._disc_loss(nonterms, features)
+            disc_loss = disc_loss_dict['disc_loss']
 
         if self.args.use_disc_model:
             model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss + self.args.disc_loss_coeff * disc_loss
         else:
             model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss 
         
-        return model_loss
+        loss_dict['model_loss'] = model_loss
+
+        log_dict['world_model/model_loss'] = model_loss.item()
+        log_dict.update(rew_log_dict)
+        log_dict.update(obs_log_dict)
+        log_dict.update(kl_log_dict)
+        if self.args.use_disc_model:
+            log_dict.update(disc_log_dict)
+
+        return loss_dict, log_dict
 
     def update_world_model(self, obs, acs, rews, nonterms):
-        model_loss = self.world_model_loss(obs, acs, rews, nonterms)
+        world_model_loss_dict, world_model_log_dict = self.world_model_loss(obs, acs, rews, nonterms)
+        model_loss = world_model_loss_dict['model_loss']
         self.world_model_opt.zero_grad()
         model_loss.backward()
         nn.utils.clip_grad_norm_(self.world_model_params, self.args.grad_clip_norm)
         self.world_model_opt.step()
-        return model_loss
+        return world_model_log_dict
     
     def update_actor(self):
-        actor_loss = self.actor_loss()
+        actor_loss_dict, actor_log_dict = self.actor_loss()
+        actor_loss = actor_loss_dict['actor_loss']
         self.actor_opt.zero_grad()
         actor_loss.backward()
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.args.grad_clip_norm)
         self.actor_opt.step()
-        return actor_loss
+        return actor_log_dict
     
     def update_critic(self):
-        with torch.no_grad():
-            value_feat = self.imag_feat[:-1].detach()
-            # discount   = self.discounts.detach() # TODO not use
-            value_targ = self.returns.detach()
-
-        value_dist = self.critic(value_feat)  
-        value_loss = -torch.mean(self.discounts * value_dist.log_prob(value_targ).unsqueeze(-1))
-        
+        value_loss_dict, value_log_dict = self.critic_loss()
+        value_loss = value_loss_dict['value_loss']
         self.critic_opt.zero_grad()
         value_loss.backward()
         nn.utils.clip_grad_norm_(self.critic.parameters(), self.args.grad_clip_norm)
         self.critic_opt.step()
-        return value_loss
+        return value_log_dict
 
     def update_slow_target(self):
         if self.args.slow_target:
@@ -331,19 +376,18 @@ class AgentDreamer:
             self._updates += 1
 
     def update(self):
+        loss_dict = {}
         obs, acs, rews, nonterms = self.data_buffer.sample_dreamer()
 
-        model_loss = self.update_world_model(obs, acs, rews, nonterms)
-        actor_loss = self.update_actor()
-        value_loss = self.update_critic()
+        world_model_log_dict = self.update_world_model(obs, acs, rews, nonterms)
+        actor_log_dict = self.update_actor()
+        value_log_dict = self.update_critic()
         self.update_slow_target()
 
-        loss_dict = {}
-        loss_dict['train/model_loss'] = model_loss.item()
-        loss_dict['train/actor_loss'] = actor_loss.item()
-        loss_dict['train/value_loss'] = value_loss.item()
+        loss_dict.update(world_model_log_dict)
+        loss_dict.update(actor_log_dict)
+        loss_dict.update(value_log_dict)
         return loss_dict
-        return model_loss.item(), actor_loss.item(), value_loss.item()
 
     def evaluate(self, env, eval_episodes, render=False):
 
@@ -394,7 +438,7 @@ class AgentDreamer:
 
         return np.array(seed_episode_rews)
 
-    def save_checkpoint(self, checkpoint_path):
+    def save(self, checkpoint_path):
         """Save the model parameters and optimizer to a file."""
         torch.save(
             {'rssm':          self.rssm.state_dict(),
@@ -409,7 +453,7 @@ class AgentDreamer:
             'critic_optimizer':      self.critic_opt.state_dict(),
             }, checkpoint_path)
 
-    def load_checkpoint(self, checkpoint_path):
+    def load(self, checkpoint_path):
         """Load model parameters from a file."""
         checkpoint = torch.load(checkpoint_path)
         self.rssm.load_state_dict(checkpoint['rssm'])
@@ -424,11 +468,11 @@ class AgentDreamer:
         self.actor_opt.load_state_dict(checkpoint['actor_optimizer'])
         self.critic_opt.load_state_dict(checkpoint['critic_optimizer'])
 
-    def save_data_buffer(self, data_buffer_path):
+    def save_data(self, data_buffer_path):
         """Save the data buffer to a file."""
         self.data_buffer.save(data_buffer_path)
 
-    def load_data_buffer(self, data_buffer_path):
+    def load_data(self, data_buffer_path):
         """Load the data buffer from a file."""
         self.data_buffer.load(data_buffer_path)
 

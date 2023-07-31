@@ -516,7 +516,7 @@ class AgentTIA:
 
         return np.array(seed_episode_rews)
 
-    def save_checkpoint(self, checkpoint_path):
+    def save(self, checkpoint_path):
 
         torch.save(
             {'main_rssm' : self.main_rssm.state_dict(),
@@ -537,7 +537,7 @@ class AgentTIA:
             'disen_reward_optimizer': self.disen_reward_opt.state_dict(),
             'decoder_optimizer': self.decoder_opt.state_dict()}, checkpoint_path)
 
-    def load_checkpoint(self, checkpoint_path):
+    def load(self, checkpoint_path):
 
         checkpoint = torch.load(checkpoint_path)
         self.main_rssm.load_state_dict(checkpoint['main_rssm'])
@@ -560,11 +560,11 @@ class AgentTIA:
         self.disen_reward_opt.load_state_dict(checkpoint['disen_reward_optimizer'])
         self.decoder_opt.load_state_dict(checkpoint['decoder_optimizer'])
 
-    def save_data_buffer(self, data_buffer_path):
+    def save_data(self, data_buffer_path):
         """Save the data buffer to a file."""
         self.data_buffer.save(data_buffer_path)
 
-    def load_data_buffer(self, data_buffer_path):
+    def load_data(self, data_buffer_path):
         """Load the data buffer from a file."""
         self.data_buffer.load(data_buffer_path)
 

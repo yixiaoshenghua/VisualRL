@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import json
 import torch
+import tqdm
 
 from collections import OrderedDict
 import envs
@@ -25,15 +26,15 @@ def get_args():
     # General parameters
     parser.add_argument('--env', type=str, default='walker-walk', help='Control Suite environment')
     parser.add_argument('--agent', type=str, default='Dreamerv1', choices=['Dreamerv1', 'Dreamerv2'], help='choosing algorithm')
-    parser.add_argument('--exp-name', type=str, default='lr1e-3', help='name of experiment for logging')
+    parser.add_argument('--exp-name', type=str, default='None', help='name of experiment for logging')
     parser.add_argument('--train', action='store_true', default=False, help='trains the model')
     parser.add_argument('--evaluate', action='store_true', default=False, help='tests the model')
     parser.add_argument('--seed', type=int, default=1, help='Random seed')
     parser.add_argument('--gpu', type=int, default=0, help="GPU id used")
 
     # Restore parameters
-    parser.add_argument('--restore-data-buffer', action='store_true', default=False, help='Restores data buffer')
-    parser.add_argument('--restore-data-buffer-path', type=str, default='', help='Restore data buffer path')
+    parser.add_argument('--restore-data', action='store_true', default=False, help='Restores data buffer')
+    parser.add_argument('--restore-data-path', type=str, default='', help='Restore data buffer path')
 
     parser.add_argument('--restore-checkpoint', action='store_true', default=False, help='Restore model from checkpoint')
     parser.add_argument('--restore-checkpoint-path', type=str, default='', help='Restore checkpoint path')
@@ -117,9 +118,9 @@ def get_args():
     parser.add_argument('--save-checkpoint-interval', type=int, default=100000, help='Checkpoint interval (steps)')
     parser.add_argument('--save-checkpoint-path', type=str, default='', help='save checkpoint path')
 
-    parser.add_argument('--save-data-buffer', action='store_true', default=False, help='save data buffer')
-    parser.add_argument('--save-data-buffer-interval', type=int, default=100000, help='data buffer interval (steps)')
-    parser.add_argument('--save-data-buffer-path', type=str, default='', help='save data buffer path')
+    parser.add_argument('--save-data', action='store_true', default=False, help='save data buffer')
+    parser.add_argument('--save-data-interval', type=int, default=100000, help='data buffer interval (steps)')
+    parser.add_argument('--save-data-path', type=str, default='', help='save data buffer path')
     
     parser.add_argument('--render', action='store_true', default=False, help='Render environment')
 
@@ -213,11 +214,11 @@ def main():
     episode_length = 0
     start_time = time.time()
 
-    for step in range(args.total_steps):
+    for step in tqdm.tqdm(range(args.total_steps)):
         # update
         if step >= args.init_steps:
             num_updates = args.init_steps*args.update_steps if step == args.init_steps else args.update_steps
-            for _ in range(num_updates):
+            for _ in tqdm.tqdm(range(num_updates), desc='update'):
                 agent_update_dict = agent.update()
             L.log_scalars(agent_update_dict, step)
 
@@ -230,7 +231,7 @@ def main():
         next_obs, reward, done, _ = train_env.step(action)
         episode_return += reward
 
-        agent.data_buffer.add(obs, action, reward, done)
+        agent.data_buffer.add(obs, action, reward, next_obs, done, done)
         obs = next_obs
         episode_length += 1
 
@@ -257,9 +258,9 @@ def main():
 
         # save
         if args.save_checkpoint and ((step+1) % args.save_checkpoint_interval == 0):
-            agent.save_checkpoint(os.path.join(logdir, 'checkpoint{}.pt'.format(step)))
-        if args.save_data_buffer and ((step+1) % args.save_data_buffer_interval == 0):
-            agent.save_data_buffer(os.path.join(logdir, 'buffer{}.pt'.format(step))) # [TODO] not implemented yet
+            agent.save(os.path.join(logdir, 'checkpoint{}.pt'.format(step)))
+        if args.save_data and ((step+1) % args.save_data_interval == 0):
+            agent.save_data(os.path.join(logdir, 'buffer{}.pt'.format(step))) # [TODO] not implemented yet
 
 
 
