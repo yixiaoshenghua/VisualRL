@@ -72,7 +72,7 @@ class AgentTIA:
         self.main_obs_decoder  = MaskConvDecoder(
                             stoch_size = self.args.stoch_size,
                             deter_size = self.args.deter_size,
-                            output_shape = (6,*self.obs_shape[1:]),
+                            output_shape = (2*self.obs_shape[0],*self.obs_shape[1:]), # origin: (6, *self.obs_shape[1:])，默认6=2×3(output dist&mask)，默认没有frame stack
                             activation = self.args.cnn_activation_function,
                             discrete=self.args.discrete).to(self.device)
         self.disen_obs_encoder = ConvEncoder(
@@ -82,7 +82,7 @@ class AgentTIA:
         self.disen_obs_decoder = MaskConvDecoder(
                             stoch_size = self.args.stoch_size,
                             deter_size = self.args.deter_size,
-                            output_shape = (6,*self.obs_shape[1:]),
+                            output_shape = (2*self.obs_shape[0],*self.obs_shape[1:]), # 同上
                             activation = self.args.cnn_activation_function,
                             discrete=self.args.discrete).to(self.device)
         self.disen_only_obs_decoder = ConvDecoder(

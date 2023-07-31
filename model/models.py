@@ -277,9 +277,9 @@ class MaskConvDecoder(nn.Module):
         out = self.dense(features)
         out = torch.reshape(out, [-1, 32*self.depth, 1, 1])
         out = self.convtranspose(out)
-        mean, mask = torch.split(out, [3, 3], dim=1)
-        mean = torch.reshape(mean, (*out_batch_shape, 3, *self.output_shape[1:])) # (T, B, 3, size, size)
-        mask = torch.reshape(mask, (*out_batch_shape, 3, *self.output_shape[1:])) # (T, B, 3, size, size)
+        mean, mask = torch.split(out, [self.output_shape[0]//2]*2, dim=1) # origin: (out, [3,3], dim=1), 默认channel=3
+        mean = torch.reshape(mean, (*out_batch_shape, self.output_shape[0]//2, *self.output_shape[1:])) # (T, B, 3, size, size)
+        mask = torch.reshape(mask, (*out_batch_shape, self.output_shape[0]//2, *self.output_shape[1:])) # (T, B, 3, size, size)
         
         out_dist = distributions.independent.Independent(
             distributions.Normal(mean, 1), len(self.output_shape))
@@ -293,7 +293,7 @@ class EnsembleMaskConvDecoder(nn.Module):
         self.decoder1 = decoder1
         self.decoder2 = decoder2
         self.output_shape = decoder1.output_shape # (3, size, size)
-        self.mask_conv = nn.Sequential(nn.Conv2d(6, 1, 1, stride=1),
+        self.mask_conv = nn.Sequential(nn.Conv2d(self.output_shape[0], 1, 1, stride=1), # origin: nn.Conv2d(6, 1, 1, stride=1)
                                        nn.Sigmoid())
 
     def forward(self, features1, features2):
@@ -302,7 +302,7 @@ class EnsembleMaskConvDecoder(nn.Module):
         mean1 = pred1.mean
         mean2 = pred2.mean
         mask_feat = torch.cat([mask1, mask2], dim=2) # (T, B, 6, size, size)
-        mask_feat = torch.reshape(mask_feat, [-1, 6, *self.output_shape[1:]])
+        mask_feat = torch.reshape(mask_feat, [-1, *self.output_shape]) # origin: [-1, 6, *self.output_shape[1:]
         mask = self.mask_conv(mask_feat) # (T*B, 1, size, size)
         mask = torch.reshape(mask, [*mask1.shape[:2], *mask.shape[1:]]) # # (T, B, 1, size, size)
         mean = mean1 * mask + mean2 * (1 - mask)
