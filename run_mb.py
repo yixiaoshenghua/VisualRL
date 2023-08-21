@@ -138,8 +138,8 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
 class TMP_Logger:
     def __init__(self):
         pass
-    def log_scalar(self, dic):
-        print(dic)
+    def log_scalars(self, dic, step):
+        print(step, dic)
     def log_scalar(self, name, value, step):
         print(name, value, step)
 
@@ -212,35 +212,21 @@ def main():
     episode = 0
     episode_return = 0
     episode_length = 0
+
+    step = 0
+
     start_time = time.time()
 
-    for step in tqdm.tqdm(range(args.total_steps)):
-        # update
-        if step >= args.init_steps:
-            num_updates = args.init_steps*args.update_steps if step == args.init_steps else args.update_steps
-            for _ in tqdm.tqdm(range(num_updates), desc='update'):
-                agent_update_dict = agent.update()
-            L.log_scalars(agent_update_dict, step)
-
-        # get action
-        if step < args.init_steps:
-            action = train_env.action_space.sample()
-        else:
-            with utils.eval_mode(agent):
-                action = agent.sample_action(obs)
-        next_obs, reward, done, _ = train_env.step(action)
-        episode_return += reward
-
-        agent.data_buffer.add(obs, action, reward, next_obs, done, done)
-        obs = next_obs
-        episode_length += 1
-
+    for step in range(0, args.total_steps, args.action_repeat):
         if done:
             # log
-            L.log_scalar('train/duration', time.time() - start_time, step)
-            L.log_scalar('train/episode', episode, step)
-            L.log_scalar('train/episode_length', episode_length, step)
-            L.log_scalar('train/episode_return', episode_return, step)
+            episode_log = {
+                'train/duration': time.time() - start_time,
+                'train/episode': episode,
+                'train/episode_length': episode_length,
+                'train/episode_return': episode_return,
+            }
+            L.log_scalars(episode_log, step)
 
             # reset
             obs = train_env.reset()
@@ -250,6 +236,29 @@ def main():
             episode_return = 0
             episode_length = 0
             start_time = time.time()
+
+        # update
+        if step >= args.init_steps:
+            if step % args.collect_steps == 0:
+                # num_updates = args.init_steps*args.update_steps if step == args.init_steps else args.update_steps
+                num_updates = args.update_steps
+                for _ in tqdm.tqdm(range(num_updates), desc=str(step)):
+                    agent_update_dict = agent.update()
+                L.log_scalars(agent_update_dict, step)
+
+        # get action
+        if step < args.init_steps:
+            action = train_env.action_space.sample()
+        else:
+            with utils.eval_mode(agent):
+                action = agent.sample_action(obs, explore=True)
+        next_obs, reward, done, _ = train_env.step(action)
+        episode_return += reward
+
+        agent.data_buffer.add(obs, action, reward, next_obs, done, float(done))
+        obs = next_obs
+        episode_length += args.action_repeat
+
 
         # evaluate
         # if (step+1) % args.eval_freq == 0:

@@ -163,7 +163,7 @@ class MBLogger:
 
     def log_scalars(self, scalar_dict, step):
         for key, value in scalar_dict.items():
-            # print('{} : {}'.format(key, value))
+            print('{} : {}'.format(key, value))
             self.log_scalar(key, value, step)
         self.dump_scalars_to_pickle(scalar_dict, step)
 

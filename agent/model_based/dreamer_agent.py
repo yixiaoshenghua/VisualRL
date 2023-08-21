@@ -1,3 +1,4 @@
+from typing import Dict, List, Tuple, Union
 import time
 import numpy as np
 import torch
@@ -176,7 +177,7 @@ class AgentDreamer:
         
         return action.cpu().data.numpy().flatten()
 
-    def actor_loss(self):
+    def actor_loss(self) -> Tuple[Dict[str, torch.Tensor], Dict[str, float]]:
         loss_dict, log_dict = {}, {}
         with torch.no_grad():
             posterior = self.rssm.detach_state(self.rssm.seq_to_batch(self.posterior))
@@ -209,7 +210,7 @@ class AgentDreamer:
         log_dict['train/actor_loss'] = actor_loss.item()
         return loss_dict, log_dict
 
-    def critic_loss(self):
+    def critic_loss(self) -> Tuple[Dict[str, torch.Tensor], Dict[str, float]]:
         loss_dict, log_dict = {}, {}
         with torch.no_grad():
             value_feat = self.imag_feat[:-1].detach()
@@ -302,7 +303,7 @@ class AgentDreamer:
         log_dict['world_model/disc_loss'] = disc_loss.item()
         return loss_dict, log_dict
 
-    def world_model_loss(self, obs, acs, rews, nonterms):
+    def world_model_loss(self, obs, acs, rews, nonterms) -> Tuple[Dict[str, torch.Tensor], Dict[str, float]]:
         loss_dict, log_dict = {}, {}
 
         obs = preprocess_obs(obs)

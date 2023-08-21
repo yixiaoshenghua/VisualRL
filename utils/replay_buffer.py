@@ -168,11 +168,11 @@ class CPCReplayBuffer(Dataset):
     def sample_dreamer(self):
         n = self.batch_size
         l = self.seq_len
-        obs, acs, rews, terms = self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
+        obs, acs, rews, nonterms = self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
         obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
         acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
         rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
-        nonterms = torch.tensor((1.0-terms), dtype=torch.float32).to(self.device).unsqueeze(-1)
+        nonterms = torch.tensor(nonterms, dtype=torch.float32).to(self.device).unsqueeze(-1)
         return obs, acs, rews, nonterms
 
     def sample(self, k=False):

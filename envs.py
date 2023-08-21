@@ -25,7 +25,7 @@ def make_env(args):
     env = ActionRepeat(env, args.action_repeat)
     env = NormalizeActions(env)
     env = TimeLimit(env, args.time_limit / args.action_repeat)
-    env = FrameStack(env, args.frame_stack) # TODO 参考FrameStack中具体问题
+    # env = FrameStack(env, args.frame_stack) # TODO 参考FrameStack中具体问题
     #env = RewardObs(env)
     return env
 
