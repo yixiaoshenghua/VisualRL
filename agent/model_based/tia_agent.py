@@ -27,6 +27,7 @@ class AgentTIA:
                                            self.device, self.args.train_seq_len)
         self.step = args.init_steps
         self._build_model(restore=self.restore)
+        self.train()
 
     def _build_model(self, restore):
 
@@ -173,7 +174,7 @@ class AgentTIA:
             self.load(self.restore_path)
 
     def train(self, training: bool = True):
-        self.trainging = training
+        self.training = training
 
         self.main_rssm.train(training)
         self.disen_rssm.train(training)
