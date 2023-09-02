@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import copy
 import math
 from model.encoder import make_encoder
-from utils.pytorch_util import gaussian_logprob, squash, weight_init
+from utils.pytorch_util import weight_init
 
 LOG_FREQ = 10000
 
@@ -31,14 +31,15 @@ class Critic(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(
         self, obs_shape, action_shape, hidden_dim, encoder_type,
-        encoder_feature_dim, num_layers, num_filters, device, builtin_encoder=True
+        encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder=True
     ):
         super().__init__()
         self.builtin_encoder = builtin_encoder
+
         if self.builtin_encoder:
             self.encoder = make_encoder(
                 encoder_type, obs_shape, encoder_feature_dim, num_layers,
-                num_filters, device
+                num_filters, output_logits=output_logits
             )
 
         self.Q1 = QFunction(

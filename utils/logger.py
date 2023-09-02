@@ -10,183 +10,55 @@ import torchvision
 import numpy as np
 from termcolor import colored
 
-FORMAT_CONFIG = {
-    'rl': {
-        'train': [
-            ('episode', 'E', 'int'), ('step', 'S', 'int'),
-            ('duration', 'D', 'time'), ('episode_reward', 'R', 'float'),
-            ('batch_reward', 'BR', 'float'), ('actor_loss', 'ALOSS', 'float'),
-            ('critic_loss', 'CLOSS', 'float'), ('ae_loss', 'RLOSS', 'float')
-        ],
-        'eval': [('step', 'S', 'int'), ('episode_reward', 'ER', 'float')]
-    }
-}
 
+class Logger:
 
-class AverageMeter(object):
-    def __init__(self):
-        self._sum = 0
-        self._count = 0
-
-    def update(self, value, n=1):
-        self._sum += value
-        self._count += n
-
-    def value(self):
-        return self._sum / max(1, self._count)
-
-
-class MetersGroup(object):
-    def __init__(self, file_name, formating):
-        self._file_name = file_name
-        if os.path.exists(file_name):
-            os.remove(file_name)
-        self._formating = formating
-        self._meters = defaultdict(AverageMeter)
-
-    def log(self, key, value, n=1):
-        self._meters[key].update(value, n)
-
-    def _prime_meters(self):
-        data = dict()
-        for key, meter in self._meters.items():
-            if key.startswith('train'):
-                key = key[len('train') + 1:]
-            else:
-                key = key[len('eval') + 1:]
-            key = key.replace('/', '_')
-            data[key] = meter.value()
-        return data
-
-    def _dump_to_file(self, data):
-        with open(self._file_name, 'a') as f:
-            f.write(json.dumps(data) + '\n')
-
-    def _format(self, key, value, ty):
-        template = '%s: '
-        if ty == 'int':
-            template += '%d'
-        elif ty == 'float':
-            template += '%.04f'
-        elif ty == 'time':
-            template += '%.01f s'
-        else:
-            raise 'invalid format type: %s' % ty
-        return template % (key, value)
-
-    def _dump_to_console(self, data, prefix):
-        prefix = colored(prefix, 'yellow' if prefix == 'train' else 'green')
-        pieces = ['{:5}'.format(prefix)]
-        for key, disp_key, ty in self._formating:
-            value = data.get(key, 0)
-            pieces.append(self._format(disp_key, value, ty))
-        print('| %s' % (' | '.join(pieces)))
-
-    def dump(self, step, prefix):
-        if len(self._meters) == 0:
-            return
-        data = self._prime_meters()
-        data['step'] = step
-        self._dump_to_file(data)
-        self._dump_to_console(data, prefix)
-        self._meters.clear()
-
-
-class Logger(object):
-    def __init__(self, log_dir, use_tb=True, config='rl'):
-        self._log_dir = log_dir
-        if use_tb:
-            tb_dir = os.path.join(log_dir, 'tb')
-            if os.path.exists(tb_dir):
-                shutil.rmtree(tb_dir)
-            self._sw = SummaryWriter(tb_dir)
-        else:
-            self._sw = None
-        self._train_mg = MetersGroup(
-            os.path.join(log_dir, 'train.log'),
-            formating=FORMAT_CONFIG[config]['train']
-        )
-        self._eval_mg = MetersGroup(
-            os.path.join(log_dir, 'eval.log'),
-            formating=FORMAT_CONFIG[config]['eval']
-        )
-
-    def _try_sw_log(self, key, value, step):
-        if self._sw is not None:
-            self._sw.add_scalar(key, value, step)
-
-    def _try_sw_log_image(self, key, image, step):
-        if self._sw is not None:
-            assert image.dim() == 3
-            grid = torchvision.utils.make_grid(image.unsqueeze(1))
-            self._sw.add_image(key, grid, step)
-
-    def _try_sw_log_video(self, key, frames, step):
-        if self._sw is not None:
-            frames = torch.from_numpy(np.array(frames))
-            frames = frames.unsqueeze(0)
-            self._sw.add_video(key, frames, step, fps=30)
-
-    def log(self, key, value, step, n=1):
-        assert key.startswith('train') or key.startswith('eval')
-        if type(value) == torch.Tensor:
-            value = value.item()
-        self._try_sw_log(key, value / n, step)
-        mg = self._train_mg if key.startswith('train') else self._eval_mg
-        mg.log(key, value, n)
-
-    def log_image(self, key, image, step):
-        assert key.startswith('train') or key.startswith('eval')
-        self._try_sw_log_image(key, image, step)
-
-    def log_video(self, key, frames, step):
-        assert key.startswith('train') or key.startswith('eval')
-        self._try_sw_log_video(key, frames, step)
-
-    def dump(self, step):
-        self._train_mg.dump(step, 'train')
-        self._eval_mg.dump(step, 'eval')
-
-
-class MBLogger:
-
-    def __init__(self, log_dir, n_logged_samples=10, summary_writer=None):
+    def __init__(self, args, log_dir, n_logged_samples=10, summary_writer=None):
         self._log_dir = log_dir
         print('########################')
         print('logging outputs to ', log_dir)
         print('########################')
         self._n_logged_samples = n_logged_samples
-        self._summ_writer = SummaryWriter(log_dir, flush_secs=1, max_queue=1)
+        if args.save_tb:
+            self._summ_writer = SummaryWriter(log_dir, flush_secs=1, max_queue=1)
+        else:
+            self._summ_writer = None
 
     def log_scalar(self, name, scalar, step_):
         self._summ_writer.add_scalar('{}'.format(name), scalar, step_)
 
     def log_scalars(self, scalar_dict, step):
-        for key, value in scalar_dict.items():
-            print('{} : {}'.format(key, value))
-            self.log_scalar(key, value, step)
-        self.dump_scalars_to_pickle(scalar_dict, step)
+        if self._summ_writer is not None:
+            for key, value in scalar_dict.items():
+                print('{} : {}'.format(key, value))
+                self.log_scalar(key, value, step)
+            self.dump_scalars_to_pickle(scalar_dict, step)
 
     def log_videos(self, videos, step, max_videos_to_save=1, fps=20, video_title='video'):
+        if self._summ_writer is not None:
+            # max rollout length
+            max_videos_to_save = np.min([max_videos_to_save, videos.shape[0]])
+            max_length = videos[0].shape[0]
+            for i in range(max_videos_to_save):
+                if videos[i].shape[0]>max_length:
+                    max_length = videos[i].shape[0]
 
-        # max rollout length
-        max_videos_to_save = np.min([max_videos_to_save, videos.shape[0]])
-        max_length = videos[0].shape[0]
-        for i in range(max_videos_to_save):
-            if videos[i].shape[0]>max_length:
-                max_length = videos[i].shape[0]
+            # pad rollouts to all be same length
+            for i in range(max_videos_to_save):
+                if videos[i].shape[0]<max_length:
+                    padding = np.tile([videos[i][-1]], (max_length-videos[i].shape[0],1,1,1))
+                    videos[i] = np.concatenate([videos[i], padding], 0)
 
-        # pad rollouts to all be same length
-        for i in range(max_videos_to_save):
-            if videos[i].shape[0]<max_length:
-                padding = np.tile([videos[i][-1]], (max_length-videos[i].shape[0],1,1,1))
-                videos[i] = np.concatenate([videos[i], padding], 0)
+                clip = mpy.ImageSequenceClip(list(videos[i]), fps=fps)
+                new_video_title = video_title+'{}_{}'.format(step, i) + '.gif'
+                filename = os.path.join(self._log_dir, new_video_title)
+                clip.write_gif(filename, fps=fps)
 
-            clip = mpy.ImageSequenceClip(list(videos[i]), fps=fps)
-            new_video_title = video_title+'{}_{}'.format(step, i) + '.gif'
-            filename = os.path.join(self._log_dir, new_video_title)
-            clip.write_gif(filename, fps=fps)
-
+    def log_images(self, key, image, step):
+        if self._summ_writer is not None:
+            assert image.dim() == 3
+            grid = torchvision.utils.make_grid(image.unsqueeze(1))
+            self._summ_writer.add_image(key, grid, step)
 
     def dump_scalars_to_pickle(self, metrics, step, log_title=None):
         log_path = os.path.join(self._log_dir, "scalar_data.pkl" if log_title is None else log_title)

@@ -9,20 +9,53 @@ import kornia
 import copy
 from utils.data_augs import center_crop_images, random_crop
 
+def make_replay_buffer(args, action_shape, device):
+    if args.agent.lower() == 'curl':
+        replay_buffer = ReplayBuffer(
+            obs_shape=(3*args.frame_stack, args.pre_transform_image_size, args.pre_transform_image_size),
+            action_shape=action_shape,
+            capacity=args.buffer_size,
+            batch_size=args.batch_size,
+            device=device,
+            image_size=args.image_size
+        )
+    elif args.agent.lower() == 'dreamerv1' or args.agent.lower() == 'dreamerv2':
+        replay_buffer = ReplayBuffer(
+            obs_shape=(3*args.frame_stack, args.pre_transform_image_size, args.pre_transform_image_size), 
+            action_shape=action_shape, 
+            capacity=args.buffer_size, 
+            batch_size=args.batch_size, 
+            device=device, 
+            seq_len=args.train_seq_len
+        )
+    else:
+        replay_buffer = ReplayBuffer(
+            obs_shape=(3*args.frame_stack, args.image_size, args.image_size),
+            action_shape=action_shape,
+            capacity=args.buffer_size,
+            batch_size=args.batch_size,
+            device=device,
+            image_pad=args.image_pad
+        )
+    return replay_buffer
 
-class CPCReplayBuffer(Dataset):
+
+class ReplayBuffer(Dataset):
     """Buffer to store environment transitions."""
     def __init__(
         self, obs_shape, action_shape, capacity, batch_size, device,
-        seq_len = None,
+        seq_len = None, image_pad=4,
         path_len=None, image_size=84, transform=None
     ):
         self.capacity = capacity
         self.batch_size = batch_size
-        self.seq_len = seq_len
         self.device = device
+        self.aug_trans = nn.Sequential(
+            nn.ReplicationPad2d(image_pad),
+            kornia.augmentation.RandomCrop((obs_shape[-1], obs_shape[-1])))
         self.image_size = image_size
         self.transform = transform
+
         # the proprioceptive obs is stored as float32, pixels obs as uint8
         obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
 
@@ -35,39 +68,39 @@ class CPCReplayBuffer(Dataset):
         self.idx = 0
         self.last_save = 0
         self.full = False
+
+        self.seq_len = seq_len
         self._path_len = path_len
 
-    def add(self, obs, action, reward, next_obs, done, done_bool):
+    def add(self, obs, action, reward, next_obs, done):
 
         np.copyto(self.obses[self.idx], obs['image'])
         np.copyto(self.actions[self.idx], action)
         np.copyto(self.rewards[self.idx], reward)
         np.copyto(self.next_obses[self.idx], next_obs['image'])
-        np.copyto(self.not_dones[self.idx], not done_bool)
+        np.copyto(self.not_dones[self.idx], not done)
 
         self.idx = (self.idx + 1) % self.capacity
         self.full = self.full or self.idx == 0
-
-    def sample_proprio(self):
-
+    
+    def sample(self, k=False):
         idxs = np.random.randint(
             0, self.capacity if self.full else self.idx, size=self.batch_size
         )
 
-        obses = self.obses[idxs]
-        next_obses = self.next_obses[idxs]
-
-        obses = torch.as_tensor(obses, device=self.device).float()
+        obses = torch.as_tensor(self.obses[idxs], device=self.device).float()
         actions = torch.as_tensor(self.actions[idxs], device=self.device)
         rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
         next_obses = torch.as_tensor(
-            next_obses, device=self.device
+            self.next_obses[idxs], device=self.device
         ).float()
         not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
+        if k:
+            return obses, actions, rewards, next_obses, not_dones, torch.as_tensor(self.k_obses[idxs], device=self.device)
+
         return obses, actions, rewards, next_obses, not_dones
 
     def sample_cpc(self):
-        # start = time.time()
         idxs = np.random.randint(
             0, self.capacity if self.full else self.idx, size=self.batch_size
         )
@@ -93,7 +126,50 @@ class CPCReplayBuffer(Dataset):
                           time_anchor=None, time_pos=None)
 
         return obses, actions, rewards, next_obses, not_dones, cpc_kwargs
+    
+    def sample_aug(self):
+        idxs = np.random.randint(0,
+                                 self.capacity if self.full else self.idx,
+                                 size=self.batch_size)
 
+        obses = self.obses[idxs]
+        next_obses = self.next_obses[idxs]
+        obses_aug = obses.copy()
+        next_obses_aug = next_obses.copy()
+
+        obses = torch.as_tensor(obses, device=self.device).float()
+        next_obses = torch.as_tensor(next_obses, device=self.device).float()
+        obses_aug = torch.as_tensor(obses_aug, device=self.device).float()
+        next_obses_aug = torch.as_tensor(next_obses_aug,
+                                         device=self.device).float()
+        actions = torch.as_tensor(self.actions[idxs], device=self.device)
+        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
+        not_dones = torch.as_tensor(self.not_dones[idxs],
+                                           device=self.device)
+
+        obses = self.aug_trans(obses)
+        next_obses = self.aug_trans(next_obses)
+
+        obses_aug = self.aug_trans(obses_aug)
+        next_obses_aug = self.aug_trans(next_obses_aug)
+
+        return obses, actions, rewards, next_obses, not_dones, obses_aug, next_obses_aug
+    
+    def sample_dreamer(self):
+        n = self.batch_size
+        l = self.seq_len
+        obs, acs, rews, nonterms = self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
+        obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
+        acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
+        rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
+        nonterms = torch.tensor(nonterms, dtype=torch.float32).to(self.device).unsqueeze(-1)
+        return obs, acs, rews, nonterms
+
+    def _retrieve_batch(self, idxs, n, L):
+        vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
+        observations = self.obses[vec_idxs]
+        return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.not_dones[vec_idxs].reshape(L, n)
+    
     def _sample_sequential_idx(self, n, L):
         # Returns an index for a valid single chunk uniformly sampled from the
         # memory
@@ -159,39 +235,6 @@ class CPCReplayBuffer(Dataset):
             valid_idx = not self.idx in idxs[1:] 
         return idxs
 
-    def _retrieve_batch(self, idxs, n, L):
-        
-        vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
-        observations = self.obses[vec_idxs]
-        return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.not_dones[vec_idxs].reshape(L, n)
-
-    def sample_dreamer(self):
-        n = self.batch_size
-        l = self.seq_len
-        obs, acs, rews, nonterms = self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
-        obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
-        acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
-        rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
-        nonterms = torch.tensor(nonterms, dtype=torch.float32).to(self.device).unsqueeze(-1)
-        return obs, acs, rews, nonterms
-
-    def sample(self, k=False):
-        idxs = np.random.randint(
-            0, self.capacity if self.full else self.idx, size=self.batch_size
-        )
-
-        obses = torch.as_tensor(self.obses[idxs], device=self.device).float()
-        actions = torch.as_tensor(self.actions[idxs], device=self.device)
-        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
-        next_obses = torch.as_tensor(
-            self.next_obses[idxs], device=self.device
-        ).float()
-        not_dones = torch.as_tensor(self.not_dones[idxs], device=self.device)
-        if k:
-            return obses, actions, rewards, next_obses, not_dones, torch.as_tensor(self.k_obses[idxs], device=self.device)
-
-        return obses, actions, rewards, next_obses, not_dones
-
     def save(self, save_dir):
         if self.idx == self.last_save:
             return
@@ -239,7 +282,7 @@ class CPCReplayBuffer(Dataset):
         return obs, action, reward, next_obs, not_done
 
     def __len__(self):
-        return self.capacity
+        return self.capacity if self.full else self.idx
 
 
 class ReplayBufferFLARE(Dataset):
@@ -433,118 +476,3 @@ class ReplayBufferFLARE(Dataset):
 
     def __len__(self):
         return self.capacity 
-
-#TODO: When to use this replay buffer?
-class AugReplayBuffer(object):
-    """Buffer to store environment transitions."""
-    def __init__(self, obs_shape, action_shape, capacity, image_pad, device):
-        self.capacity = capacity
-        self.device = device
-
-        self.aug_trans = nn.Sequential(
-            nn.ReplicationPad2d(image_pad),
-            kornia.augmentation.RandomCrop((obs_shape[-1], obs_shape[-1])))
-
-        self.obses = np.empty((capacity, *obs_shape), dtype=np.uint8)
-        self.next_obses = np.empty((capacity, *obs_shape), dtype=np.uint8)
-        self.actions = np.empty((capacity, *action_shape), dtype=np.float32)
-        self.rewards = np.empty((capacity, 1), dtype=np.float32)
-        self.not_dones = np.empty((capacity, 1), dtype=np.float32)
-        self.not_dones_no_max = np.empty((capacity, 1), dtype=np.float32)
-
-        self.idx = 0
-        self.full = False
-
-    def __len__(self):
-        return self.capacity if self.full else self.idx
-
-    def add(self, obs, action, reward, next_obs, done, done_no_max):
-        np.copyto(self.obses[self.idx], obs)
-        np.copyto(self.actions[self.idx], action)
-        np.copyto(self.rewards[self.idx], reward)
-        np.copyto(self.next_obses[self.idx], next_obs)
-        np.copyto(self.not_dones[self.idx], not done)
-        np.copyto(self.not_dones_no_max[self.idx], not done_no_max)
-
-        self.idx = (self.idx + 1) % self.capacity
-        self.full = self.full or self.idx == 0
-
-    def sample_aug(self, batch_size):
-        idxs = np.random.randint(0,
-                                 self.capacity if self.full else self.idx,
-                                 size=batch_size)
-
-        obses = self.obses[idxs]
-        next_obses = self.next_obses[idxs]
-        obses_aug = obses.copy()
-        next_obses_aug = next_obses.copy()
-
-        obses = torch.as_tensor(obses, device=self.device).float()
-        next_obses = torch.as_tensor(next_obses, device=self.device).float()
-        obses_aug = torch.as_tensor(obses_aug, device=self.device).float()
-        next_obses_aug = torch.as_tensor(next_obses_aug,
-                                         device=self.device).float()
-        actions = torch.as_tensor(self.actions[idxs], device=self.device)
-        rewards = torch.as_tensor(self.rewards[idxs], device=self.device)
-        not_dones_no_max = torch.as_tensor(self.not_dones_no_max[idxs],
-                                           device=self.device)
-
-        obses = self.aug_trans(obses)
-        next_obses = self.aug_trans(next_obses)
-
-        obses_aug = self.aug_trans(obses_aug)
-        next_obses_aug = self.aug_trans(next_obses_aug)
-
-        return obses, actions, rewards, next_obses, not_dones_no_max, obses_aug, next_obses_aug
-
-# class MBReplayBuffer:
-
-#     def __init__(self, size, obs_shape, action_size, seq_len, batch_size):
-
-#         self.size = size
-#         self.obs_shape = obs_shape
-#         self.action_size = action_size
-#         self.seq_len = seq_len
-#         self.batch_size = batch_size
-#         self.idx = 0
-#         self.full = False
-#         self.observations = np.empty((size, *obs_shape), dtype=np.uint8) 
-#         self.actions = np.empty((size, action_size), dtype=np.float32)
-#         self.rewards = np.empty((size,), dtype=np.float32) 
-#         self.terminals = np.empty((size,), dtype=np.float32)
-#         self.steps, self.episodes = 0, 0
-    
-#     def add(self, obs, ac, rew, done):
-
-#         self.observations[self.idx] = obs['image']
-#         self.actions[self.idx] = ac
-#         self.rewards[self.idx] = rew
-#         self.terminals[self.idx] = done
-#         self.idx = (self.idx + 1) % self.size
-#         self.full = self.full or self.idx == 0
-#         self.steps += 1 
-#         self.episodes = self.episodes + (1 if done else 0)
-
-#     def _sample_idx(self, L):
-
-#         valid_idx = False
-#         while not valid_idx:
-#             idx = np.random.randint(0, self.size if self.full else self.idx - L)
-#             idxs = np.arange(idx, idx + L) % self.size
-#             valid_idx = not self.idx in idxs[1:] 
-#         return idxs
-
-#     def _retrieve_batch(self, idxs, n, L):
-        
-#         vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
-#         observations = self.observations[vec_idxs]
-#         return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.terminals[vec_idxs].reshape(L, n)
-
-#     def sample(self):
-#         n = self.batch_size
-#         l = self.seq_len
-#         obs, acs, rews, terms= self._retrieve_batch(np.asarray([self._sample_idx(l) for _ in range(n)]), n, l)
-#         return obs, acs, rews, terms
-
-#     def save(self, save_dir):
-#         pass

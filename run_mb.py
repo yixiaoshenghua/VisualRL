@@ -10,7 +10,7 @@ import tqdm
 from collections import OrderedDict
 import envs
 
-from utils.logger import MBLogger, Logger
+from utils.logger import Logger
 from utils.video import VideoRecorder
 import utils
 
@@ -27,8 +27,6 @@ def get_args():
     parser.add_argument('--env', type=str, default='walker-walk', help='Control Suite environment')
     parser.add_argument('--agent', type=str, default='Dreamerv1', choices=['Dreamerv1', 'Dreamerv2'], help='choosing algorithm')
     parser.add_argument('--exp-name', type=str, default='None', help='name of experiment for logging')
-    parser.add_argument('--train', action='store_true', default=False, help='trains the model')
-    parser.add_argument('--evaluate', action='store_true', default=False, help='tests the model')
     parser.add_argument('--seed', type=int, default=1, help='Random seed')
     parser.add_argument('--gpu', type=int, default=0, help="GPU id used")
 
@@ -41,7 +39,6 @@ def get_args():
 
     # Env parameters
     parser.add_argument('--camera-id', type=int, default=1, help='Camera id')
-    parser.add_argument('--change-camera-freq', type=int, default=0, help='Change camera frequency')
     parser.add_argument('--frame-stack', type=int, default=3, help='Number of frames to stack')
     parser.add_argument('--time-limit', type=int, default=1000, help='time limit') # Environment TimeLimit
     parser.add_argument('--action-repeat', type=int, default=2, help='Action repeat')
@@ -67,7 +64,6 @@ def get_args():
     parser.add_argument('--actor-grad', type=str, default='auto', choices=['dynamics', 'reinforce', 'both', 'auto'], help='The strategy of policy update')
     parser.add_argument('--actor-grad-mix', type=float, default=0.1, help='Actor update mixing rate')
     parser.add_argument('--actor-ent', type=float, default=1e-4, help='Action entropy scale')
-    # parser.add_argument('--action-repeat', type=int, default=2, help='Action repeat')
     parser.add_argument('--action-noise', type=float, default=0.3, help='Action noise')
     parser.add_argument('--actor-min-std', type=float, default=1e-4, help='Action min std')
     parser.add_argument('--actor-init-std', type=float, default=5, help='Action init std')
@@ -145,7 +141,7 @@ class TMP_Logger:
 
 def make_log(args, logdir):
     # return TMP_Logger()
-    return MBLogger(logdir)
+    return Logger(args, logdir)
 
 def make_logdir(args):
     logdir_root = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')

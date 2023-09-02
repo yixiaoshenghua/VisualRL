@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.distributions as distributions
 
-from utils.replay_buffer import CPCReplayBuffer
+from utils.replay_buffer import ReplayBuffer
 from model.models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder, MaskConvDecoder, EnsembleMaskConvDecoder
 from utils import *
 
@@ -22,7 +22,7 @@ class AgentTIA:
         self.device = device
         self.restore = restore
         self.restore_path = args.restore_checkpoint_path
-        self.data_buffer = CPCReplayBuffer(self.obs_shape, self.action_shape,
+        self.data_buffer = ReplayBuffer(self.obs_shape, self.action_shape,
                                            self.args.buffer_size, self.args.batch_size, 
                                            self.device, self.args.train_seq_len)
         self.step = args.init_steps

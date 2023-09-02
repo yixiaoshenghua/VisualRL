@@ -7,6 +7,7 @@ import math
 from typing import Any, Dict, Optional, Type, Union, List
 
 import utils.util as util
+from utils.replay_buffer import make_replay_buffer
 from model.decoder import make_decoder
 from model.actor import Actor
 from model.critic import Critic
@@ -17,43 +18,33 @@ from utils.pytorch_util import weight_init
 LOG_FREQ = 10000
 
 class AgentSACAE(AgentSACBase):
-    def __init__(self, 
+    def __init__(
+        self, 
+        args,
         obs_shape: int,
         action_shape: int,
         action_range:float,
         device: Union[torch.device, str],
-        hidden_dim: int = 256,
-        discount: float = 0.99,
         init_temperature: float = 0.01,
         alpha_lr: float = 1e-3,
         alpha_beta: float = 0.9,
-        actor_lr: float = 1e-3,
-        actor_beta: float = 0.9,
-        actor_log_std_min: float = -10,
-        actor_log_std_max: float = 2,
-        actor_update_freq: int = 2,
-        critic_lr: float = 1e-3,
-        critic_beta: float = 0.9,
-        critic_tau: float = 0.005,
-        critic_target_update_freq: int = 2,
-        encoder_type: str = 'pixel',
-        encoder_feature_dim: int = 50,
-        encoder_tau: float = 0.005,
         encoder_lr: float = 1e-3,
         decoder_type: str = 'pixel',
         decoder_lr: float = 1e-3,
         decoder_update_freq: int = 1,
         decoder_latent_lambda: float = 0.0,
-        decoder_weight_lambda: float = 0.0,
-        num_layers: int = 4,
-        num_filters: int = 32,
-        builtin_encoder: bool = True
+        decoder_weight_lambda: float = 0.0
     ):
-        super().__init__(obs_shape, action_shape, action_range, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
+        super().__init__(obs_shape, action_shape, action_range, device, init_temperature, alpha_lr, alpha_beta)
 
+        self.encoder_lr = encoder_lr
+        self.decoder_type = decoder_type
+        self.decoder_lr = decoder_lr
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
-        self.decoder = self._build_decoder(decoder_type, obs_shape, encoder_feature_dim, num_layers, num_filters)
+        self.decoder_weight_lambda = decoder_weight_lambda
+
+        self.decoder = self._build_decoder(decoder_type, obs_shape, self.encoder_feature_dim, self.num_layers, self.num_filters)
         if decoder_type != 'identity':
             # optimizer for critic encoder for reconstruction loss
             self.encoder_optimizer = torch.optim.Adam(
@@ -67,6 +58,7 @@ class AgentSACAE(AgentSACBase):
                 weight_decay=decoder_weight_lambda
             )
 
+        self.data_buffer = make_replay_buffer(args, action_shape, device)
         self.train()
         self.critic_target.train()
 
@@ -88,12 +80,13 @@ class AgentSACAE(AgentSACBase):
             decoder.apply(weight_init)
         return decoder
 
-    def update_decoder(self, obs, target_obs, L, step):
+    def decoder_loss(self, obs, target_obs):
+        loss_dict, log_dict = {}, {}
         h = self.critic.encoder(obs)
 
         if target_obs.dim() == 4:
             # preprocess images to be in [-0.5, 0.5] range
-            target_obs = util.preprocess_obs(target_obs)
+            target_obs = util.ae_preprocess_obs(target_obs)
         rec_obs = self.decoder(h)
         rec_loss = F.mse_loss(target_obs, rec_obs)
 
@@ -102,6 +95,14 @@ class AgentSACAE(AgentSACBase):
         latent_loss = (0.5 * h.pow(2).sum(1)).mean()
 
         loss = rec_loss + self.decoder_latent_lambda * latent_loss
+        loss_dict['ae_loss'] = loss
+        log_dict['train/ae_loss'] = loss.item()
+        return loss_dict, log_dict
+
+    def update_decoder(self, obs, target_obs):
+        decoder_loss_dict, decoder_log_dict = self.decoder_loss(obs, target_obs)
+        loss = decoder_loss_dict['ae_loss']
+
         self.encoder_optimizer.zero_grad()
         self.decoder_optimizer.zero_grad()
         loss.backward()
@@ -109,26 +110,20 @@ class AgentSACAE(AgentSACBase):
         self.encoder_optimizer.step()
         self.decoder_optimizer.step()
 
-        self.decoder.log(L, step, log_freq=LOG_FREQ)
-        return loss
+        # self.decoder.log(L, step, log_freq=LOG_FREQ)
+        return decoder_log_dict
 
-    def update(self, replay_buffer, L, step):
-        obs, action, reward, next_obs, not_done = replay_buffer.sample()
-
+    def update(self, L, step):
         loss_dict = {}
-
+        obs, action, reward, next_obs, not_done = self.data_buffer.sample()
         loss_dict['train/batch_reward'] = reward.mean()
 
-        critic_loss = self.update_critic(obs, action, reward, next_obs, not_done, L, step)
-        loss_dict['train_critic/loss'] = critic_loss
+        critic_log_dict = self.update_critic(obs, action, reward, next_obs, not_done)
+        loss_dict.update(critic_log_dict)
 
         if step % self.actor_update_freq == 0:
-            actor_loss, target_entropy, entropy, alpha_loss, alpha = self.update_actor_and_alpha(obs, step)
-            loss_dict['train_actor/loss'] = actor_loss
-            loss_dict['train_actor/target_entropy'] = target_entropy
-            loss_dict['train_actor/entropy'] = entropy
-            loss_dict['train_alpha/loss'] = alpha_loss
-            loss_dict['train_alpha/value'] = alpha
+            actor_log_dict = self.update_actor_and_alpha(obs)
+            loss_dict.update(actor_log_dict)
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(
@@ -143,8 +138,10 @@ class AgentSACAE(AgentSACBase):
             )
 
         if self.decoder is not None and step % self.decoder_update_freq == 0:
-            decoder_loss = self.update_decoder(obs, obs, L, step)
-            loss_dict['train_ae/ae_loss'] = decoder_loss
+            decoder_log_dict = self.update_decoder(obs, obs)
+            loss_dict.update(decoder_log_dict)
+        
+        return loss_dict
 
     def save(self, model_dir, step):
         torch.save(

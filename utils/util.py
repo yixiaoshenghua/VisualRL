@@ -7,10 +7,66 @@ import random
 import re
 from typing import Iterable
 from torch.nn import Module
-import gym
+import gymnasium as gym
+
+
+class eval_mode(object):
+    def __init__(self, *models):
+        self.models = models
+
+    def __enter__(self):
+        self.prev_states = []
+        for model in self.models:
+            self.prev_states.append(model.training)
+            model.train(False)
+
+    def __exit__(self, *args):
+        for model, state in zip(self.models, self.prev_states):
+            model.train(state)
+        return False
+
+
+def soft_update_params(net, target_net, tau):
+    for param, target_param in zip(net.parameters(), target_net.parameters()):
+        target_param.data.copy_(
+            tau * param.data + (1 - tau) * target_param.data
+        )
+
+#FIXME: We may not need this
+def set_seed_everywhere(seed):
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+def module_hash(module):
+    result = 0
+    for tensor in module.state_dict().values():
+        result += tensor.sum().item()
+    return result
+
+#FIXME: We may not need this
+def make_dir(dir_path):
+    try:
+        os.mkdir(dir_path)
+    except OSError:
+        pass
+    return dir_path
 
 def preprocess_obs(obs):
     obs = obs.to(torch.float32)/255.0 - 0.5
+    return obs
+
+def ae_preprocess_obs(obs, bits=5):
+    """Preprocessing image, see https://arxiv.org/abs/1807.03039."""
+    bins = 2**bits
+    assert obs.dtype == torch.float32
+    if bits < 8:
+        obs = torch.floor(obs / 2**(8 - bits))
+    obs = obs / bins
+    obs = obs + torch.rand_like(obs) / bins
+    obs = obs - 0.5
     return obs
 
 def get_parameters(modules: Iterable[Module]):
@@ -91,21 +147,6 @@ def schedule(string, step):
         raise NotImplementedError(string)
 
 
-class eval_mode(object):
-    def __init__(self, *models):
-        self.models = models
-
-    def __enter__(self):
-        self.prev_states = []
-        for model in self.models:
-            self.prev_states.append(model.training)
-            model.train(False)
-
-    def __exit__(self, *args):
-        for model, state in zip(self.models, self.prev_states):
-            model.train(state)
-        return False
-
 def get_device(memory_limits=6000):
     import os
     os.system("nvidia-smi -q -d Memory | grep -A4 GPU | grep Free > tmp.txt")
@@ -117,12 +158,6 @@ def get_device(memory_limits=6000):
             return i
     print("Fail to assign cuda due to memory limitation!!!")
     return -1
-
-def soft_update_params(net, target_net, tau):
-    for param, target_param in zip(net.parameters(), target_net.parameters()):
-        target_param.data.copy_(
-            tau * param.data + (1 - tau) * target_param.data
-        )
 
 '''https://github.com/yusukeurakami/dreamer-pytorch/utils.py'''
 def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.95):
@@ -142,41 +177,6 @@ def lambda_return(imged_reward, value_pred, bootstrap, discount=0.99, lambda_=0.
     outputs = torch.stack(outputs, 0)
     returns = outputs
     return returns
-
-def set_seed_everywhere(seed):
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-
-
-def module_hash(module):
-    result = 0
-    for tensor in module.state_dict().values():
-        result += tensor.sum().item()
-    return result
-
-
-def make_dir(dir_path):
-    try:
-        os.mkdir(dir_path)
-    except OSError:
-        pass
-    return dir_path
-
-
-def preprocess_obs(obs, bits=5):
-    """Preprocessing image, see https://arxiv.org/abs/1807.03039."""
-    bins = 2**bits
-    assert obs.dtype == torch.float32
-    if bits < 8:
-        obs = torch.floor(obs / 2**(8 - bits))
-    obs = obs / bins
-    obs = obs + torch.rand_like(obs) / bins
-    obs = obs - 0.5
-    return obs
-
 
 RESERVED_NAMES = ("get", "items")
 
@@ -308,14 +308,14 @@ def namedarraytuple(typename, field_names, return_namedtuple_cls=False,
 
 
 
-def get_conv_shape(convs, input_dim, device):
-    with torch.no_grad():
-        x = convs[0](torch.randn(1, *input_dim).type(torch.FloatTensor))
-        if len(convs) > 1:
-            for conv in convs[1:]:
-                x = conv(x)
-        num_features_after_cnn = np.prod(list(x.shape))
-        return num_features_after_cnn
+# def get_conv_shape(convs, input_dim, device):
+#     with torch.no_grad():
+#         x = convs[0](torch.randn(1, *input_dim).type(torch.FloatTensor))
+#         if len(convs) > 1:
+#             for conv in convs[1:]:
+#                 x = conv(x)
+#         num_features_after_cnn = np.prod(list(x.shape))
+#         return num_features_after_cnn
 
 def center_crop_image(image, output_size):
     h, w = image.shape[1:]

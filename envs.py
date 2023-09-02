@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 import os
 import random
 from collections import deque
@@ -25,7 +25,7 @@ def make_env(args):
     env = ActionRepeat(env, args.action_repeat)
     env = NormalizeActions(env)
     env = TimeLimit(env, args.time_limit / args.action_repeat)
-    # env = FrameStack(env, args.frame_stack) # TODO 参考FrameStack中具体问题
+    env = FrameStack(env, args.frame_stack) # TODO 参考FrameStack中具体问题
     #env = RewardObs(env)
     return env
 
@@ -69,7 +69,7 @@ class GymRobotEnv:
 
 class DeepMindControl:
 
-    def __init__(self, args, name, seed, size=(64, 64), camera=None):
+    def __init__(self, args, name, seed, camera=None):
         self.args = args
         domain, task = name.split('-', 1)
         if domain == 'cup':  # Only domain with multiple words.
@@ -80,7 +80,7 @@ class DeepMindControl:
         else:
           assert task is None
           self._env = domain()
-        self._size = size
+        self._size = (args.pre_transform_image_size, args.pre_transform_image_size)
         if camera is None:
           camera = dict(quadruped=2).get(domain, 0)
         self._camera = camera
@@ -120,8 +120,8 @@ class DeepMindControl:
     def render(self, *args, **kwargs):
         if kwargs.get('mode', 'rgb_array') != 'rgb_array':
           raise ValueError("Only render mode 'rgb_array' is supported.")
-        if self.args.change_camera_freq > 0:
-            return self._env.physics.render(*self._size, camera_id=int(int(self._steps//self.args.change_camera_freq)%2))
+        # if self.args.change_camera_freq > 0:
+        #     return self._env.physics.render(*self._size, camera_id=int(int(self._steps//self.args.change_camera_freq)%2))
         return self._env.physics.render(*self._size, camera_id=self._camera)
 
 class Claw:

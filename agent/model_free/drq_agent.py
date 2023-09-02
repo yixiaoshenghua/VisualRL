@@ -8,6 +8,7 @@ import math
 from typing import Any, Dict, Optional, Type, Union, List
 
 import utils.util as util
+from utils.replay_buffer import make_replay_buffer
 from model.decoder import make_decoder
 from model.actor import Actor
 from model.critic import Critic
@@ -17,43 +18,25 @@ import utils.data_augs as rad
 
 class AgentDrQ(AgentSACBase):
     """Data regularized Q: actor-critic method for learning from pixels."""
-    def __init__(
-        self,
+    def __init__(self,
+        args,
         obs_shape: int,
         action_shape: int,
         action_range: float,
         device: Union[torch.device, str],
-        hidden_dim: int = 256,
-        discount: float = 0.99,
         init_temperature: float = 0.01,
         alpha_lr: float = 1e-3,
-        alpha_beta: float = 0.9,
-        actor_lr: float = 1e-3,
-        actor_beta: float = 0.9,
-        actor_log_std_min: float = -10,
-        actor_log_std_max: float = 2,
-        actor_update_freq: int = 2,
-        critic_lr: float = 1e-3,
-        critic_beta: float = 0.9,
-        critic_tau: float = 0.005,
-        critic_target_update_freq: int = 2,
-        encoder_type: str = 'pixel',
-        encoder_feature_dim: int = 50,
-        encoder_tau: float = 0.005,
-        num_layers: int = 4,
-        num_filters: int = 32,
-        detach_encoder: bool = False,
-        batch_size: int = 64,
-        builtin_encoder: bool = True
+        alpha_beta: float = 0.9
         ):
-        super().__init__(obs_shape, action_shape, action_range, device, hidden_dim, discount, init_temperature, alpha_lr, alpha_beta, actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, critic_lr, critic_beta, critic_tau, critic_target_update_freq, encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, builtin_encoder)
+        super().__init__(obs_shape, action_shape, action_range, device, init_temperature, alpha_lr, alpha_beta)
         self.image_size = obs_shape[-1]
-        self.batch_size = batch_size
         self.decoder = None
         self.train()
         self.critic_target.train()
+        self.data_buffer = make_replay_buffer(args, action_shape, device)
 
     def select_action(self, obs):
+        obs = obs['image']
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
@@ -64,6 +47,7 @@ class AgentDrQ(AgentSACBase):
             return mu.cpu().data.numpy().flatten()
     
     def sample_action(self, obs):
+        obs = obs['image']
         if obs.shape[-1] != self.image_size:
             obs = util.center_crop_image(obs, self.image_size)
  
@@ -76,23 +60,16 @@ class AgentDrQ(AgentSACBase):
             pi = pi.clamp(*self.action_range)
             return pi.cpu().data.numpy().flatten()
         
-    def update_critic(self, obs, obs_aug, action, reward, next_obs,
-                      next_obs_aug, not_done, L, step):
+    def critic_loss(self, obs, obs_aug, action, reward, next_obs, next_obs_aug, not_done):
+        loss_dict, log_dict = {}, {}
         with torch.no_grad():
             _, next_action, log_prob, _ = self.actor(next_obs)
-            # dist = self.actor(next_obs)
-            # next_action = dist.rsample()
-            # log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
             target_Q1, target_Q2 = self.critic_target(next_obs, next_action)
             target_V = torch.min(target_Q1,
                                  target_Q2) - self.alpha.detach() * log_prob
             target_Q = reward + (not_done * self.discount * target_V)
 
             _, next_action_aug, log_prob_aug, _ = self.actor(next_obs)
-            # dist_aug = self.actor(next_obs_aug)
-            # next_action_aug = dist_aug.rsample()
-            # log_prob_aug = dist_aug.log_prob(next_action_aug).sum(-1,
-            #                                                       keepdim=True)
             target_Q1, target_Q2 = self.critic_target(next_obs_aug,
                                                       next_action_aug)
             target_V = torch.min(
@@ -110,38 +87,39 @@ class AgentDrQ(AgentSACBase):
 
         critic_loss += F.mse_loss(Q1_aug, target_Q) + F.mse_loss(
             Q2_aug, target_Q)
+        
+        loss_dict['critic_loss'] = critic_loss
+        log_dict['train/critic_loss'] = critic_loss.item()
+        return loss_dict, log_dict
 
+    def update_critic(self, obs, obs_aug, action, reward, next_obs, next_obs_aug, not_done):
+        critic_loss_dict, critic_log_dict = self.critic_loss(obs, obs_aug, action, reward, next_obs, next_obs_aug, not_done)
         # Optimize the critic
+        critic_loss = critic_loss_dict['critic_loss']
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
 
-        self.critic.log(L, step)
-        return critic_loss.item()
+        # self.critic.log(L, step)
+        return critic_log_dict
 
-    def update(self, replay_buffer, L, step):
-        obs, action, reward, next_obs, not_done, obs_aug, next_obs_aug = replay_buffer.sample_aug(
-            self.batch_size)
-        
+    def update(self, L, step):
         loss_dict = {}
-
+        obs, action, reward, next_obs, not_done, obs_aug, next_obs_aug = self.data_buffer.sample_aug()
         loss_dict['train/batch_reward'] = reward.mean()
 
-        critic_loss = self.update_critic(obs, obs_aug, action, reward, next_obs,
-                                         next_obs_aug, not_done, L, step)
-        loss_dict['train_critic/loss'] = critic_loss
+        critic_log_dict = self.update_critic(obs, obs_aug, action, reward, next_obs, next_obs_aug, not_done)
+        loss_dict.update(critic_log_dict)
 
         if step % self.actor_update_freq == 0:
-            actor_loss, target_entropy, entropy, alpha_loss, alpha = self.update_actor_and_alpha(obs, step)
-            loss_dict['train_actor/loss'] = actor_loss
-            loss_dict['train_actor/target_entropy'] = target_entropy
-            loss_dict['train_actor/entropy'] = entropy
-            loss_dict['train_alpha/loss'] = alpha_loss
-            loss_dict['train_alpha/value'] = alpha
+            actor_log_dict = self.update_actor_and_alpha(obs, step)
+            loss_dict.update(actor_log_dict)
 
         if step % self.critic_target_update_freq == 0:
             util.soft_update_params(self.critic, self.critic_target,
                                      self.critic_tau)
+            
+        return loss_dict
 
     def save_DRQ(self, model_dir, step):
         params = dict(actor=self.actor, critic=self.critic)
