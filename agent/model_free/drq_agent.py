@@ -28,7 +28,7 @@ class AgentDrQ(AgentSACBase):
         alpha_beta: float = 0.9,
         action_range: list = [-1., 1.]
         ):
-        super().__init__(obs_shape, action_shape, device, init_temperature, alpha_lr, alpha_beta)
+        super().__init__(args, obs_shape, action_shape, device, init_temperature, alpha_lr, alpha_beta)
         self.action_range = action_range
         self.image_size = obs_shape[-1]
         self.decoder = None
@@ -139,7 +139,7 @@ class AgentDrQ(AgentSACBase):
         log_dict['train/alpha'] = self.alpha
         return loss_dict, log_dict
 
-    def update(self, L, step):
+    def update(self, step):
         loss_dict = {}
         obs, action, reward, next_obs, not_done, obs_aug, next_obs_aug = self.data_buffer.sample_aug()
         loss_dict['train/batch_reward'] = reward.mean()
@@ -148,7 +148,7 @@ class AgentDrQ(AgentSACBase):
         loss_dict.update(critic_log_dict)
 
         if step % self.actor_update_freq == 0:
-            actor_log_dict = self.update_actor_and_alpha(obs, step)
+            actor_log_dict = self.update_actor_and_alpha(obs)
             loss_dict.update(actor_log_dict)
 
         if step % self.critic_target_update_freq == 0:

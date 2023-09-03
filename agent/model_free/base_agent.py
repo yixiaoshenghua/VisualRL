@@ -46,7 +46,7 @@ class AgentBase:
         # CURL doesn't add the tanh nonlinearity to the output of the fc layer
         self.output_logits = True if args.agent.lower() == 'curl' else False
 
-        self.critic = self._build_critic(obs_shape, action_shape, 
+        self.critic = self._build_critic(args, obs_shape, action_shape, 
                                          self.hidden_dim, 
                                          self.encoder_type,
                                          self.encoder_feature_dim, 
@@ -54,7 +54,7 @@ class AgentBase:
                                          self.num_filters, 
                                          self.output_logits,
                                          self.builtin_encoder)
-        self.critic_target = self._build_critic_target(obs_shape, action_shape, 
+        self.critic_target = self._build_critic_target(args, obs_shape, action_shape, 
                                                        self.hidden_dim, 
                                                        self.encoder_type,
                                                        self.encoder_feature_dim, 
@@ -94,19 +94,19 @@ class AgentBase:
         actor.encoder.copy_conv_weights_from(self.critic.encoder)
         return actor
 
-    def _build_critic(self, obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim,    
+    def _build_critic(self, args, obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim,    
             num_layers, num_filters, output_logits, builtin_encoder=True):
         critic = Critic(
-            obs_shape, action_shape, hidden_dim, encoder_type,
+            args, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder
         ).to(self.device)
         return critic
 
 
-    def _build_critic_target(self, obs_shape, action_shape, hidden_dim, encoder_type,
+    def _build_critic_target(self, args, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder=True):
         critic_target = Critic(
-            obs_shape, action_shape, hidden_dim, encoder_type,
+            args, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder
         ).to(self.device)
         critic_target.load_state_dict(self.critic.state_dict())

@@ -362,6 +362,7 @@ def main():
         device=device, 
         action_range=action_range
     )
+    agent_name = args.agent.lower()
 
     # save args
     save_args(args, logdir)
@@ -416,7 +417,10 @@ def main():
                     L.log_scalars(agent_update_dict, step)
             else:
                 # Here num_updates should be a small num
-                num_updates = args.init_steps if step == args.init_steps else args.update_steps
+                if agent_name != 'sac_ae':
+                    num_updates = args.update_steps
+                else:
+                    num_updates = args.init_steps if step == args.init_steps else args.update_steps
                 for _ in range(num_updates):
                     loss_dict = agent.update(step)
                 if step % args.log_interval == 0:
