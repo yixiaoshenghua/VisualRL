@@ -23,7 +23,6 @@ class AgentSACAE(AgentSACBase):
         args,
         obs_shape: int,
         action_shape: int,
-        action_range:float,
         device: Union[torch.device, str],
         init_temperature: float = 0.01,
         alpha_lr: float = 1e-3,
@@ -35,7 +34,7 @@ class AgentSACAE(AgentSACBase):
         decoder_latent_lambda: float = 0.0,
         decoder_weight_lambda: float = 0.0
     ):
-        super().__init__(obs_shape, action_shape, action_range, device, init_temperature, alpha_lr, alpha_beta)
+        super().__init__(args, obs_shape, action_shape, device, init_temperature, alpha_lr, alpha_beta)
 
         self.encoder_lr = encoder_lr
         self.decoder_type = decoder_type
@@ -113,7 +112,7 @@ class AgentSACAE(AgentSACBase):
         # self.decoder.log(L, step, log_freq=LOG_FREQ)
         return decoder_log_dict
 
-    def update(self, L, step):
+    def update(self, step):
         loss_dict = {}
         obs, action, reward, next_obs, not_done = self.data_buffer.sample()
         loss_dict['train/batch_reward'] = reward.mean()

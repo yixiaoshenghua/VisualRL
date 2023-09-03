@@ -5,20 +5,27 @@ import torch.nn.functional as F
 import copy
 import math
 from model.encoder import make_encoder
-from utils.pytorch_util import weight_init
+from utils.pytorch_util import weight_init, drq_weight_init
 
 LOG_FREQ = 10000
 
 class QFunction(nn.Module):
     """MLP for q-function."""
-    def __init__(self, obs_dim, action_dim, hidden_dim):
+    def __init__(self, agent, obs_dim, action_dim, hidden_dim):
         super().__init__()
-
-        self.trunk = nn.Sequential(
-            nn.Linear(obs_dim + action_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+        
+        if agent == 'drq':
+            self.trunk = nn.Sequential(
+            nn.Linear(obs_dim + action_dim, hidden_dim), nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, 1)
         )
+        else:
+            self.trunk = nn.Sequential(
+                nn.Linear(obs_dim + action_dim, hidden_dim), nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+                nn.Linear(hidden_dim, 1)
+            )
 
     def forward(self, obs, action):
         assert obs.size(0) == action.size(0)
@@ -30,10 +37,12 @@ class QFunction(nn.Module):
 class Critic(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(
-        self, obs_shape, action_shape, hidden_dim, encoder_type,
+        self, args, obs_shape, action_shape, hidden_dim, encoder_type,
         encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder=True
     ):
         super().__init__()
+        self.args = args
+        self.agent = args.agent.lower()
         self.builtin_encoder = builtin_encoder
 
         if self.builtin_encoder:
@@ -43,14 +52,17 @@ class Critic(nn.Module):
             )
 
         self.Q1 = QFunction(
-            encoder_feature_dim, action_shape[0], hidden_dim
+            self.agent, encoder_feature_dim, action_shape[0], hidden_dim
         )
         self.Q2 = QFunction(
-            encoder_feature_dim, action_shape[0], hidden_dim
+            self.agent, encoder_feature_dim, action_shape[0], hidden_dim
         )
 
         self.outputs = dict()
-        self.apply(weight_init)
+        if self.agent == 'drq':
+            self.apply(drq_weight_init)
+        else:
+            self.apply(weight_init)
 
     def forward(self, obs, action, detach_encoder=False):
         # detach_encoder allows to stop gradient propogation to encoder

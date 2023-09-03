@@ -5,17 +5,20 @@ import torch.nn.functional as F
 import copy
 import math
 from model.encoder import make_encoder
-from utils.pytorch_util import gaussian_logprob, squash, weight_init
+from utils.pytorch_util import gaussian_logprob, squash, weight_init, drq_weight_init
+from utils.util import SquashedNormal
 
 LOG_FREQ = 10000
 
 class Actor(nn.Module):
     """CNN actor network"""
     def __init__(
-        self, obs_shape, action_shape, hidden_dim, encoder_type,
+        self, args, obs_shape, action_shape, hidden_dim, encoder_type,
         encoder_feature_dim, log_std_min, log_std_max, num_layers, num_filters, output_logits, builtin_encoder=True
     ):
         super().__init__()
+        self.args = args
+        self.agent = args.agent.lower()
         self.builtin_encoder = builtin_encoder
         
         if self.builtin_encoder:
@@ -27,14 +30,22 @@ class Actor(nn.Module):
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
 
-        self.trunk = nn.Sequential(
-            nn.Linear(encoder_feature_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+        if self.agent == 'drq':
+            self.trunk = nn.Sequential(
+            nn.Linear(encoder_feature_dim, hidden_dim), nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, 2 * action_shape[0])
         )
+            self.apply(drq_weight_init)
+        else:
+            self.trunk = nn.Sequential(
+                nn.Linear(encoder_feature_dim, hidden_dim), nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+                nn.Linear(hidden_dim, 2 * action_shape[0])
+            )
+            self.apply(weight_init)
 
         self.outputs = dict()
-        self.apply(weight_init)
 
     def forward(
         self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False
@@ -55,6 +66,9 @@ class Actor(nn.Module):
 
         if compute_pi:
             std = log_std.exp()
+            if self.agent == 'drq':
+                dist = SquashedNormal(mu, std)
+                return dist
             noise = torch.randn_like(mu)
             pi = mu + noise * std
         else:

@@ -34,6 +34,18 @@ def weight_init(m):
         gain = nn.init.calculate_gain('relu')
         nn.init.orthogonal_(m.weight.data[:, :, mid, mid], gain)
 
+def drq_weight_init(m):
+    """Custom weight init for Conv2D and Linear layers."""
+    if isinstance(m, nn.Linear):
+        nn.init.orthogonal_(m.weight.data)
+        if hasattr(m.bias, 'data'):
+            m.bias.data.fill_(0.0)
+    elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        gain = nn.init.calculate_gain('relu')
+        nn.init.orthogonal_(m.weight.data, gain)
+        if hasattr(m.bias, 'data'):
+            m.bias.data.fill_(0.0)
+
 def soft_update_from_to(source, target, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
         target_param.data.copy_(

@@ -3,7 +3,7 @@ import torch
 import argparse
 import os
 import math
-import gymnasium as gym
+import gym
 import sys
 import random
 import time
@@ -40,9 +40,9 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
     name = args.agent.lower()
     if name == 'sac_ae':
         return AgentSACAE(
+            args=args,
             obs_shape=obs_shape,
             action_shape=action_shape,
-            action_range=action_range,
             device=device,
             init_temperature=args.init_temperature,
             alpha_lr=args.alpha_lr,
@@ -224,11 +224,11 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
             args=args,
             obs_shape=obs_shape, 
             action_shape=action_shape, 
-            action_range=action_range,
             device=device,
             init_temperature=args.init_temperature,
             alpha_lr=args.alpha_lr,
-            alpha_beta=args.alpha_beta
+            alpha_beta=args.alpha_beta,
+            action_range=action_range
         )
     elif name == 'curl':
         agent = AgentCURL(

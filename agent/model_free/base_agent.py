@@ -62,7 +62,7 @@ class AgentBase:
                                                        self.num_filters, 
                                                        self.output_logits,
                                                        self.builtin_encoder)
-        self.actor = self._build_actor(obs_shape, action_shape, 
+        self.actor = self._build_actor(args, obs_shape, action_shape, 
                                        self.hidden_dim, 
                                        self.encoder_type, 
                                        self.encoder_feature_dim, 
@@ -81,11 +81,11 @@ class AgentBase:
         )
         self.data_buffer = make_replay_buffer(args, action_shape, device)
 
-    def _build_actor(self, obs_shape, action_shape, hidden_dim, encoder_type,
+    def _build_actor(self, args, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
             num_layers, num_filters, output_logits, builtin_encoder=True):
         actor = Actor(
-            obs_shape, action_shape, hidden_dim, encoder_type,
+            args, obs_shape, action_shape, hidden_dim, encoder_type,
             encoder_feature_dim, actor_log_std_min, actor_log_std_max,
             num_layers, num_filters, output_logits, builtin_encoder
         ).to(self.device)
