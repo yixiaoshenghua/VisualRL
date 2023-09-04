@@ -11,10 +11,10 @@ LOG_FREQ = 10000
 
 class QFunction(nn.Module):
     """MLP for q-function."""
-    def __init__(self, agent, obs_dim, action_dim, hidden_dim):
+    def __init__(self, is_drq, obs_dim, action_dim, hidden_dim):
         super().__init__()
         
-        if agent == 'drq':
+        if is_drq:
             self.trunk = nn.Sequential(
             nn.Linear(obs_dim + action_dim, hidden_dim), nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(inplace=True),
@@ -42,7 +42,7 @@ class Critic(nn.Module):
     ):
         super().__init__()
         self.args = args
-        self.agent = args.agent.lower()
+        self.drq = args.agent.lower() == "drq"
         self.builtin_encoder = builtin_encoder
 
         if self.builtin_encoder:
@@ -52,14 +52,14 @@ class Critic(nn.Module):
             )
 
         self.Q1 = QFunction(
-            self.agent, encoder_feature_dim, action_shape[0], hidden_dim
+            self.drq, encoder_feature_dim, action_shape[0], hidden_dim
         )
         self.Q2 = QFunction(
-            self.agent, encoder_feature_dim, action_shape[0], hidden_dim
+            self.drq, encoder_feature_dim, action_shape[0], hidden_dim
         )
 
         self.outputs = dict()
-        if self.agent == 'drq':
+        if self.drq:
             self.apply(drq_weight_init)
         else:
             self.apply(weight_init)

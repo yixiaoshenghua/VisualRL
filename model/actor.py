@@ -18,7 +18,7 @@ class Actor(nn.Module):
     ):
         super().__init__()
         self.args = args
-        self.agent = args.agent.lower()
+        self.drq = args.agent.lower() == "drq"
         self.builtin_encoder = builtin_encoder
         
         if self.builtin_encoder:
@@ -30,7 +30,7 @@ class Actor(nn.Module):
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
 
-        if self.agent == 'drq':
+        if self.drq:
             self.trunk = nn.Sequential(
             nn.Linear(encoder_feature_dim, hidden_dim), nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(inplace=True),
@@ -66,11 +66,12 @@ class Actor(nn.Module):
 
         if compute_pi:
             std = log_std.exp()
-            if self.agent == 'drq':
+            if not self.drq:
+                noise = torch.randn_like(mu)
+                pi = mu + noise * std
+            else:
                 dist = SquashedNormal(mu, std)
                 return dist
-            noise = torch.randn_like(mu)
-            pi = mu + noise * std
         else:
             pi = None
             entropy = None
