@@ -1,0 +1,86 @@
+# ------------------------General parameters------------------------
+exp_name: "None"
+seed: 1
+gpu: 0
+# ------------------------------Agent------------------------------
+agent: "DreamerV1"
+agent_type: "model_based"
+# ---------------------------Environment---------------------------
+env: "walker-walk"
+pre_transform_image_size: 64
+image_size: 64
+action_repeat: 2
+frame_stack: 1
+camera_id: 0
+time_limit: 1000
+# ---------------------Data collection & replay--------------------
+buffer_size: 1000000
+batch_size: 50
+max_episode_length: 1000
+train_seq_length: 50
+# -----------------------------Training-----------------------------
+init_steps: 5000
+total_steps: 1000000
+update_steps: 1000
+
+num_reward_opt_iters: 10
+collect_steps: 1000
+imagine_horizon: 15
+use_disc_model: False
+# ---------------------------Optimization---------------------------
+actor_lr: 8.0e-5
+critic_lr: 8.0e-5
+
+model_learning_rate: 6.0e-4
+disen_reward_learning_rate: 8.0e-5
+adam_epsilon: 1.0e-7
+grad_clip_norm: 100.0
+
+slow_target: False
+slow_target_update: 100
+slow_target_fraction: 1.0
+# ---------------Network/Encoder/Decoder architecture---------------
+# Network
+cnn_activation_function: "relu"
+dense_activation_function: "elu"
+
+# RSSM
+hidden_size: 200
+deter_size: 200
+stoch_size: 30
+
+# Encoder
+obs_embed_size: 1024
+
+# Decoder
+num_units: 400
+# --------------------Coefficients and constants--------------------
+discount: 0.99
+
+discrete: 32
+free_nats: 3.0
+td_lambda: 0.95
+kl_loss_coeff: 1.0
+kl_alpha: 0.8
+disc_loss_coeff: 10.0
+# ------------------------Saving and logging------------------------
+log_interval: 100
+save_tb: False
+
+save_video: False
+log_video_freq: -1
+max_videos_to_save: 2
+
+save_data: False
+save_data_interval: 100000
+save_data_path: ''
+
+save_checkpoint: False
+save_checkpoint_interval: 100000
+save_checkpoint_path: ''
+# ------------------------Restore parameters------------------------
+restore_data: False
+restore_data_path: ''
+
+restore_checkpoint: False
+restore_checkpoint_path: ''

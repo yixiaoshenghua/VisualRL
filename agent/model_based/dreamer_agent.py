@@ -115,8 +115,8 @@ class AgentDreamer:
               + list(self.obs_decoder.parameters()) + list(self.reward_model.parameters())
     
         self.world_model_opt = optim.Adam(self.world_model_params, self.args.model_learning_rate)
-        self.critic_opt = optim.Adam(self.critic.parameters(), self.args.value_learning_rate)
-        self.actor_opt = optim.Adam(self.actor.parameters(), self.args.actor_learning_rate)
+        self.critic_opt = optim.Adam(self.critic.parameters(), self.args.critic_lr)
+        self.actor_opt = optim.Adam(self.actor.parameters(), self.args.actor_lr)
 
         if self.args.use_disc_model:
             self.world_model_modules = [self.rssm, self.obs_encoder, self.obs_decoder, self.reward_model, self.discount_model]

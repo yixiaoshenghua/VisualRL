@@ -2,7 +2,7 @@ import argparse
 
 
 def get_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Reproduce of multiple Visual RL algorithms.')
     '''
     # General parameters
     '''
@@ -19,7 +19,7 @@ def get_args():
     parser.add_argument('--restore_data_path', default='', type=str, help='Restore data buffer path')
 
     parser.add_argument('--restore_checkpoint', default=False, action='store_true', help='Restore model from checkpoint')
-    parser.add_argument('--restore_checkpoint-path', default='', type=str, help='Restore checkpoint path')
+    parser.add_argument('--restore_checkpoint_path', default='', type=str, help='Restore checkpoint path')
     
     '''
     # Environment parameters
@@ -83,7 +83,7 @@ def get_args():
     parser.add_argument('--encoder_type', default='pixel', type=str)
     parser.add_argument('--encoder_feature_dim', default=50, type=int)
     parser.add_argument('--encoder_tau', default=0.05, type=float, help='Encoder EMA tau')
-    parser.add_argument('--encoder_stride', default=1, type=int)
+    parser.add_argument('--encoder_stride', default=1, type=int)    #TODO: Check if this is used
     parser.add_argument('--builtin_encoder', default=True, type=bool)
     parser.add_argument('--detach_encoder', default=False, action='store_true')
 

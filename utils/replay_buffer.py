@@ -28,7 +28,7 @@ def make_replay_buffer(args, action_shape, device):
             device=device, 
             seq_len=args.train_seq_len
         )
-    else:
+    elif args.agent.lower() == 'drq':
         replay_buffer = ReplayBuffer(
             obs_shape=(3*args.frame_stack, args.image_size, args.image_size),
             action_shape=action_shape,
@@ -36,6 +36,14 @@ def make_replay_buffer(args, action_shape, device):
             batch_size=args.batch_size,
             device=device,
             image_pad=args.image_pad
+        )
+    else:
+        replay_buffer = ReplayBuffer(
+            obs_shape=(3*args.frame_stack, args.image_size, args.image_size),
+            action_shape=action_shape,
+            capacity=args.buffer_size,
+            batch_size=args.batch_size,
+            device=device
         )
     return replay_buffer
 

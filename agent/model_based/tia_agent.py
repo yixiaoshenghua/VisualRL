@@ -153,8 +153,8 @@ class AgentTIA:
         self.disen_model_params = list(self.disen_rssm.parameters()) + list(self.disen_obs_encoder.parameters()) + list(self.disen_only_obs_decoder.parameters())
     
         self.world_model_opt = optim.Adam(self.world_model_params, self.args.model_learning_rate)
-        self.critic_opt = optim.Adam(self.critic.parameters(), self.args.value_learning_rate)
-        self.actor_opt = optim.Adam(self.actor.parameters(), self.args.actor_learning_rate)
+        self.critic_opt = optim.Adam(self.critic.parameters(), self.args.critic_lr)
+        self.actor_opt = optim.Adam(self.actor.parameters(), self.args.actor_lr)
         self.decoder_opt = optim.Adam(self.joint_obs_decoder.parameters(), self.args.model_learning_rate)
         self.disen_model_opt = optim.Adam(self.disen_model_params, self.args.model_learning_rate)
         self.disen_reward_opt = optim.Adam(self.disen_reward_model.parameters(), self.args.disen_reward_learning_rate)

@@ -1,0 +1,79 @@
+# ------------------------General parameters------------------------
+exp_name: "None"
+seed: 1
+gpu: 0
+# ------------------------------Agent------------------------------
+agent: "CURL"
+agent_type: "model_free"
+# ---------------------------Environment---------------------------
+env: "walker-walk"
+pre_transform_image_size: 100
+image_size: 84
+action_repeat: 2
+frame_stack: 3
+camera_id: 0
+time_limit: 1000
+# ---------------------Data collection & replay--------------------
+buffer_size: 100000
+batch_size: 512
+# -----------------------------Training-----------------------------
+init_steps: 1000
+total_steps: 1000000
+update_steps: 1
+# ---------------------------Optimization---------------------------
+actor_lr: 1.0e-3
+actor_beta: 0.9
+
+critic_lr: 1.0e-3
+critic_beta: 0.9
+
+alpha_lr: 1.0e-4
+alpha_beta: 0.5
+
+encoder_lr: 1.0e-3
+# ------------------------------Actor------------------------------
+actor_log_std_min: -10
+actor_log_std_max: 2
+actor_update_freq: 2
+# ------------------------------Critic------------------------------
+critic_tau: 0.01
+critic_target_update_freq: 2
+# ---------------Network/Encoder/Decoder architecture---------------
+# Network
+num_layers: 4
+num_filters: 32
+hidden_dim: 1024
+
+# Encoder
+encoder_type: "pixel"
+encoder_feature_dim: 50
+encoder_tau: 0.05
+builtin_encoder: True
+detach_encoder: False
+
+# CURL
+curl_latent_dim: 128
+# --------------------Coefficients and constants--------------------
+discount: 0.99
+init_temperature: 0.1
+# ------------------------Saving and logging------------------------
+log_interval: 100
+save_tb: False
+
+save_video: False
+log_video_freq: -1
+max_videos_to_save: 2
+
+save_data: False
+save_data_interval: 100000
+save_data_path: ''
+
+save_checkpoint: False
+save_checkpoint_interval: 100000
+save_checkpoint_path: ''
+# ------------------------Restore parameters------------------------
+restore_data: False
+restore_data_path: ''
+
+restore_checkpoint: False
+restore_checkpoint_path: ''

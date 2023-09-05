@@ -8,6 +8,7 @@ import sys
 import random
 import time
 import json
+import yaml
 import copy
 import tqdm
 
@@ -15,7 +16,6 @@ import utils.util as util
 from utils.logger import Logger
 from utils.video import VideoRecorder
 import envs
-from train.arguments import get_args
 
 from agent.model_free.sacae_agent import AgentSACAE
 from agent.model_free.flare_agent import AgentFLARE
@@ -35,6 +35,17 @@ from eval import make_eval
 
 #TODO: Set the environment variable of OpenGL here
 os.environ['MUJOCO_GL'] = 'egl'
+
+def get_args():
+    parser = argparse.ArgumentParser(description='Reproduce of multiple Visual RL algorithms.')
+    parser.add_argument('--config', default='./arguments/sac_ae.yaml', type=str, help='YAML file for configuration')
+
+    args = parser.parse_args()
+
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+        args = argparse.Namespace(**config)
+    return args
 
 def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
     name = args.agent.lower()
@@ -285,12 +296,12 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
         )
     elif name == 'dreamerv1' or name == 'dreamerv2':
         agent = AgentDreamer(args, obs_shape, action_shape, device, args.restore_checkpoint)
-    elif name == 'TIA':
+    elif name == 'tia':
         agent = AgentTIA(args, obs_shape, action_shape, device, args.restore_checkpoint)
     else:
         assert 'agent is not supported: %s' % args.agent
 
-    return agent
+    return agent, name
 
 def make_logdir(args):
     logdir_root = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')
@@ -355,14 +366,13 @@ def main():
     action_range = [float(train_env.action_space.low.min()), float(train_env.action_space.high.max())]
 
     # make agent
-    agent = make_agent(
+    agent, agent_name = make_agent(
         obs_shape=obs_shape,
         action_shape=action_shape,
         args=args,
         device=device, 
         action_range=action_range
     )
-    agent_name = args.agent.lower()
 
     # save args
     save_args(args, logdir)
