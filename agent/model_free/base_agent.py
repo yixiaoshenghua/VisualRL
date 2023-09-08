@@ -247,20 +247,17 @@ class AgentSACBase(AgentBase):
         obs_shape: int,
         action_shape: int,
         device: Union[torch.device, str],
-        init_temperature: float = 0.01,
-        alpha_lr: float = 1e-3,
-        alpha_beta: float = 0.9
     ):
         super().__init__(args, obs_shape, action_shape, device)
 
-        self.init_temperature = init_temperature
-        self.alpha_lr = alpha_lr
-        self.alpha_beta = alpha_beta
+        self.init_temperature = self.args.init_temperature
+        self.alpha_lr = self.args.alpha_lr
+        self.alpha_beta = self.args.alpha_beta
 
-        self.log_alpha = self._build_log_alpha(init_temperature, 
-                                               action_shape)
+        self.log_alpha = self._build_log_alpha(self.init_temperature, 
+                                               self.action_shape)
         self.log_alpha_optimizer = torch.optim.Adam(
-            [self.log_alpha], lr=alpha_lr, betas=(alpha_beta, 0.999)
+            [self.log_alpha], lr=self.alpha_lr, betas=(self.alpha_beta, 0.999)
         )
         self.data_buffer = make_replay_buffer(args, action_shape, device)
 

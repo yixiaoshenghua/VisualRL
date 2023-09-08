@@ -14,6 +14,7 @@ GYM_ROBOT_ENV = ['Fetch']
 # -------------------------------- Make Environment from args ------------------------------------------
 
 def make_env(args):
+    print(args.env.split('-')[0], args.env.split('-')[:2], '-'.join(args.env.split('-')[:2]))
     if args.env.split('-')[0] in DMC_ENV:
         env = DeepMindControl(args, '-'.join(args.env.split('-')[:2]), args.seed, camera=args.camera_id)
         if args.env.split('-')[-1] == 'video':
@@ -72,6 +73,7 @@ class DeepMindControl:
     def __init__(self, args, name, seed, camera=None):
         self.args = args
         domain, task = name.split('-', 1)
+        print(f"domain: {domain}, task: {task}")
         if domain == 'cup':  # Only domain with multiple words.
           domain = 'ball_in_cup'
         if isinstance(domain, str):

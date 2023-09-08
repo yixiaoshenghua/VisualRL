@@ -326,9 +326,8 @@ def make_logdir(args):
     logdir_root = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')
     os.makedirs(logdir_root, exist_ok=True)
 
-    ts = time.gmtime() 
-    ts = time.strftime("%m-%d-%H-%M-%S", ts)
-    logdir = os.path.join(logdir_root, args.env, args.agent, args.exp_name + '-s' + str(args.seed)  + '-' + ts)
+    ts = time.strftime("%m-%d-%H-%M-%S", time.gmtime())
+    logdir = os.path.join(logdir_root, args.env, args.agent, f"{args.exp_name}-s-{args.seed}-{ts}")
     os.makedirs(logdir, exist_ok=False)
 
     video_dir = os.mkdir(os.path.join(logdir, 'video'))
@@ -348,6 +347,8 @@ def set_device(args):
     return device
 
 def set_seed(seed):
+    if seed == -1:
+        seed = np.random.randint(1,1000000)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
@@ -363,8 +364,6 @@ def main():
     args = get_args()
 
     # set seed
-    if args.seed == -1: 
-        args.__dict__["seed"] = np.random.randint(1,1000000)
     set_seed(args.seed)
 
     # set device
