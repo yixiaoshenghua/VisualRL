@@ -349,11 +349,21 @@ def set_device(args):
 def set_seed(seed):
     if seed == -1:
         seed = np.random.randint(1,1000000)
+        
+    hashseed = os.getenv('PYTHONHASHSEED')
+    if not hashseed:
+        os.environ['PYTHONHASHSEED'] = str(seed)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    
     torch.manual_seed(seed)
     if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    # torch.use_deterministic_algorithms(True)
 
 def save_args(args, logdir):
     with open(os.path.join(logdir, 'args.json'), 'w') as f:
@@ -379,6 +389,7 @@ def main():
     # make train and eval envs
     train_env = envs.make_env(args)
     test_env = envs.make_env(args)
+    train_env.seed(args.seed)
     obs_shape = train_env.observation_space['image'].shape
     action_shape = train_env.action_space.shape
     action_range = [float(train_env.action_space.low.min()), float(train_env.action_space.high.max())]

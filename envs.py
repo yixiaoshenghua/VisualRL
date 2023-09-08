@@ -53,6 +53,12 @@ class GymRobotEnv:
     @property
     def action_space(self):
         return self._env.action_space
+    
+    def seed(self, seed):
+        self.action_space.seed(seed)
+        self.observation_space.seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
 
     def step(self, action):
         self._steps += 1
@@ -86,6 +92,7 @@ class DeepMindControl:
         if camera is None:
           camera = dict(quadruped=2).get(domain, 0)
         self._camera = camera
+        self.seed(seed)
 
     @property
     def observation_space(self):
