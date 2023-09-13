@@ -1,5 +1,5 @@
 # ------------------------General parameters------------------------
-exp_name: "None"
+exp_name: "Test"
 seed: 1
 gpu: 0
 # ------------------------------Agent------------------------------
@@ -7,19 +7,19 @@ agent: "dbc"
 agent_type: "model_free"
 # ---------------------------Environment---------------------------
 env: "walker-walk"
-# pre_transform_image_size: 84
-# image_size: 84
-# action_repeat: 2
-# frame_stack: 3
+pre_transform_image_size: 84
+image_size: 84
+action_repeat: 2
+frame_stack: 3
 camera_id: 0
-# time_limit: 1000
+time_limit: 1000
 # ---------------------Data collection & replay--------------------
-# buffer_size: 1000000
-# batch_size: 128
+buffer_size: 1000000
+batch_size: 128
 # -----------------------------Training-----------------------------
-# init_steps: 1000
-# total_steps: 1000000
-# update_steps: 1
+init_steps: 1000
+total_steps: 1000000
+update_steps: 1
 # ---------------------------Optimization---------------------------
 actor_lr: 1e-3
 actor_beta: 0.9
@@ -51,10 +51,10 @@ encoder_feature_dim: 50
 encoder_tau: 0.005
 bisim_coef: 0.5
 builtin_encoder: True
-# detach_encoder: False
+detach_encoder: False
 
 # # Decoder
-# decoder_type: "pixel"
+decoder_type: "pixel"
 decoder_update_freq: 1
 decoder_latent_lambda: 1.0e-6
 decoder_weight_lambda: 1.0e-7
@@ -62,23 +62,23 @@ decoder_weight_lambda: 1.0e-7
 discount: 0.99
 init_temperature: 0.1
 # ------------------------Saving and logging------------------------
-# log_interval: 100
+log_interval: 100
 save_tb: False
 
 save_video: False
-# log_video_freq: -1
-# max_videos_to_save: 2
+log_video_freq: -1
+max_videos_to_save: 2
 
-# save_data: False
-# save_data_interval: 100000
-# save_data_path: ''
+save_data: False
+save_data_interval: 100000
+save_data_path: ''
 
-# save_checkpoint: False
-# save_checkpoint_interval: 100000
-# save_checkpoint_path: ''
+save_checkpoint: False
+save_checkpoint_interval: 100000
+save_checkpoint_path: ''
 # ------------------------Restore parameters------------------------
-# restore_data: False
-# restore_data_path: ''
+restore_data: False
+restore_data_path: ''
 
-# restore_checkpoint: False
-# restore_checkpoint_path: ''
+restore_checkpoint: False
+restore_checkpoint_path: ''

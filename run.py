@@ -34,7 +34,8 @@ import numpy as np
 from eval import make_eval
 
 #TODO: Set the environment variable of OpenGL here
-os.environ['MUJOCO_GL'] = 'egl'
+# os.environ['MUJOCO_GL'] = 'egl'
+os.environ['MUJOCO_GL'] = 'glfw'
 
 AGENTS = {
     "baseline": BaselineAgent,
@@ -53,7 +54,8 @@ AGENTS = {
 
 def get_args():
     parser = argparse.ArgumentParser(description='Reproduce of multiple Visual RL algorithms.')
-    parser.add_argument('--config', default='./arguments/sac_ae.yaml', type=str, help='YAML file for configuration')
+    # parser.add_argument('--config', default='./arguments/sac_ae.yaml', type=str, help='YAML file for configuration')
+    parser.add_argument('--config', default='./arguments/dbc.yaml', type=str, help='YAML file for configuration')
 
     args = parser.parse_args()
 
@@ -63,264 +65,12 @@ def get_args():
     return args
 
 def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
-    name = args.agent.lower()
-    if name in AGENTS:
-        agent = AGENTS[name](args, obs_shape, action_shape, device, args.restore_checkpoint)
+    agent_name = args.agent.lower()
+    if agent_name in AGENTS:
+        agent = AGENTS[agent_name](args, obs_shape, action_shape, device, args.restore_checkpoint)
     else:
         assert f"Agent {args.agent} is not supported."
-    # if name == 'sac_ae':
-    #     return AgentSACAE(
-    #         args=args,
-    #         obs_shape=obs_shape,
-    #         action_shape=action_shape,
-    #         device=device,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         encoder_lr=args.encoder_lr,
-    #         decoder_type=args.decoder_type,
-    #         decoder_lr=args.decoder_lr,
-    #         decoder_update_freq=args.decoder_update_freq,
-    #         decoder_latent_lambda=args.decoder_latent_lambda,
-    #         decoder_weight_lambda=args.decoder_weight_lambda,
-    #     )
-    # elif name == 'rad':
-    #     return AgentRad(
-    #         obs_shape=obs_shape,
-    #         action_shape=action_shape,
-    #         device=device,
-    #         hidden_dim=args.hidden_dim,
-    #         discount=args.discount,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         actor_lr=args.actor_lr,
-    #         actor_beta=args.actor_beta,
-    #         actor_log_std_min=args.actor_log_std_min,
-    #         actor_log_std_max=args.actor_log_std_max,
-    #         actor_update_freq=args.actor_update_freq,
-    #         critic_lr=args.critic_lr,
-    #         critic_beta=args.critic_beta,
-    #         critic_tau=args.critic_tau,
-    #         critic_target_update_freq=args.critic_target_update_freq,
-    #         encoder_type=args.encoder_type,
-    #         encoder_feature_dim=args.encoder_feature_dim,
-    #         encoder_lr=args.encoder_lr,
-    #         encoder_tau=args.encoder_tau,
-    #         num_layers=args.num_layers,
-    #         num_filters=args.num_filters,
-    #         log_interval=args.log_interval,
-    #         detach_encoder=args.detach_encoder,
-    #         latent_dim=args.latent_dim,
-    #         data_augs=args.data_augs,
-    #         builtin_encoder=args.builtin_encoder,
-    #     )
-    # elif name == 'flare': # flare
-    #     return AgentFLARE(
-    #         obs_shape=obs_shape,
-    #         action_shape=action_shape,
-    #         device=device,
-    #         hidden_dim=args.hidden_dim,
-    #         discount=args.discount,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         actor_lr=args.actor_lr,
-    #         actor_beta=args.actor_beta,
-    #         actor_log_std_min=args.actor_log_std_min,
-    #         actor_log_std_max=args.actor_log_std_max,
-    #         actor_update_freq=args.actor_update_freq,
-    #         critic_lr=args.critic_lr,
-    #         critic_beta=args.critic_beta,
-    #         critic_tau=args.critic_tau,
-    #         critic_target_update_freq=args.critic_target_update_freq,
-    #         encoder_type=args.encoder_type,
-    #         encoder_feature_dim=args.encoder_feature_dim,
-    #         encoder_lr=args.encoder_lr,
-    #         encoder_tau=args.encoder_tau,
-    #         num_layers=args.num_layers,
-    #         num_filters=args.num_filters,
-    #         log_interval=args.log_interval,
-    #         detach_encoder=args.detach_encoder,
-    #         latent_dim=args.latent_dim,
-    #         data_augs=args.data_augs,
-    #         rank=args.local_rank,
-    #         print_param_check=args.print_param_check,
-    #         action_range=action_range,
-    #         image_channel=image_channel,
-    #         builtin_encoder=args.builtin_encoder,
-    #     )
-    # elif name == 'baseline':
-    #     agent = BaselineAgent(
-    #         obs_shape=obs_shape,
-    #         action_shape=action_shape,
-    #         device=device,
-    #         hidden_dim=args.hidden_dim,
-    #         discount=args.discount,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         actor_lr=args.actor_lr,
-    #         actor_beta=args.actor_beta,
-    #         actor_log_std_min=args.actor_log_std_min,
-    #         actor_log_std_max=args.actor_log_std_max,
-    #         actor_update_freq=args.actor_update_freq,
-    #         critic_lr=args.critic_lr,
-    #         critic_beta=args.critic_beta,
-    #         critic_tau=args.critic_tau,
-    #         critic_target_update_freq=args.critic_target_update_freq,
-    #         encoder_type=args.encoder_type,
-    #         encoder_feature_dim=args.encoder_feature_dim,
-    #         encoder_lr=args.encoder_lr,
-    #         encoder_tau=args.encoder_tau,
-    #         encoder_stride=args.encoder_stride,
-    #         decoder_type=args.decoder_type,
-    #         decoder_lr=args.decoder_lr,
-    #         decoder_update_freq=args.decoder_update_freq,
-    #         decoder_weight_lambda=args.decoder_weight_lambda,
-    #         transition_model_type=args.transition_model_type,
-    #         num_layers=args.num_layers,
-    #         num_filters=args.num_filters,
-    #         builtin_encoder=args.builtin_encoder,
-    #     )
-    # elif name == 'dbc':
-    #     agent = AgentDBC(
-    #         obs_shape=obs_shape,
-    #         action_shape=action_shape,
-    #         action_range=action_range,
-    #         device=device,
-    #         hidden_dim=args.hidden_dim,
-    #         discount=args.discount,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         actor_lr=args.actor_lr,
-    #         actor_beta=args.actor_beta,
-    #         actor_log_std_min=args.actor_log_std_min,
-    #         actor_log_std_max=args.actor_log_std_max,
-    #         actor_update_freq=args.actor_update_freq,
-    #         critic_lr=args.critic_lr,
-    #         critic_beta=args.critic_beta,
-    #         critic_tau=args.critic_tau,
-    #         critic_target_update_freq=args.critic_target_update_freq,
-    #         encoder_type=args.encoder_type,
-    #         encoder_feature_dim=args.encoder_feature_dim,
-    #         encoder_lr=args.encoder_lr,
-    #         encoder_tau=args.encoder_tau,
-    #         decoder_lr=args.decoder_lr,
-    #         decoder_update_freq=args.decoder_update_freq,
-    #         decoder_weight_lambda=args.decoder_weight_lambda,
-    #         transition_model_type=args.transition_model_type,
-    #         num_layers=args.num_layers,
-    #         num_filters=args.num_filters,
-    #         bisim_coef=args.bisim_coef,
-    #         builtin_encoder=args.builtin_encoder,
-    #     )
-    # elif name == 'deepmdp':
-    #     agent = DeepMDPAgent(
-    #         obs_shape=obs_shape,
-    #         action_shape=action_shape,
-    #         device=device,
-    #         hidden_dim=args.hidden_dim,
-    #         discount=args.discount,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         actor_lr=args.actor_lr,
-    #         actor_beta=args.actor_beta,
-    #         actor_log_std_min=args.actor_log_std_min,
-    #         actor_log_std_max=args.actor_log_std_max,
-    #         actor_update_freq=args.actor_update_freq,
-    #         encoder_stride=args.encoder_stride,
-    #         critic_lr=args.critic_lr,
-    #         critic_beta=args.critic_beta,
-    #         critic_tau=args.critic_tau,
-    #         critic_target_update_freq=args.critic_target_update_freq,
-    #         encoder_type=args.encoder_type,
-    #         encoder_feature_dim=args.encoder_feature_dim,
-    #         encoder_lr=args.encoder_lr,
-    #         encoder_tau=args.encoder_tau,
-    #         decoder_type=args.decoder_type,
-    #         decoder_lr=args.decoder_lr,
-    #         decoder_update_freq=args.decoder_update_freq,
-    #         decoder_weight_lambda=args.decoder_weight_lambda,
-    #         transition_model_type=args.transition_model_type,
-    #         num_layers=args.num_layers,
-    #         num_filters=args.num_filters,
-    #         builtin_encoder=args.builtin_encoder,
-    #     )
-    # elif name == 'drq':
-    #     agent = AgentDrQ(
-    #         args=args,
-    #         obs_shape=obs_shape, 
-    #         action_shape=action_shape, 
-    #         device=device,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         action_range=action_range
-    #     )
-    # elif name == 'curl':
-    #     agent = AgentCURL(
-    #         args=args,
-    #         obs_shape=(3*args.frame_stack, args.image_size, args.image_size),
-    #         action_shape=action_shape,
-    #         device=device,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         encoder_lr=args.encoder_lr,
-    #         cpc_update_freq=1,                      # This argument is not in the "args"
-    #         log_interval=args.log_interval,
-    #         detach_encoder=args.detach_encoder,
-    #         curl_latent_dim=args.curl_latent_dim,
-    #         data_augs=args.data_augs
-    #     )
-    # elif name == 'dribo':
-    #     agent = AgentDRIBO(
-    #         obs_shape=obs_shape,
-    #         action_shape=action_shape,
-    #         device=device,
-    #         hidden_dim=args.hidden_dim,
-    #         discount=args.discount,
-    #         init_temperature=args.init_temperature,
-    #         alpha_lr=args.alpha_lr,
-    #         alpha_beta=args.alpha_beta,
-    #         actor_lr=args.actor_lr,
-    #         actor_beta=args.actor_beta,
-    #         actor_log_std_min=args.actor_log_std_min,
-    #         actor_log_std_max=args.actor_log_std_max,
-    #         actor_update_freq=args.actor_update_freq,
-    #         critic_lr=args.critic_lr,
-    #         critic_beta=args.critic_beta,
-    #         critic_tau=args.critic_tau,
-    #         critic_target_update_freq=args.critic_target_update_freq,
-    #         encoder_type=args.encoder_type,
-    #         encoder_feature_dim=args.encoder_feature_dim, # 50
-    #         stochastic_size=args.stoch_size,
-    #         deterministic_size=args.deter_size,
-    #         encoder_lr=args.encoder_lr,
-    #         encoder_tau=args.encoder_tau,
-    #         num_layers=args.num_layers,
-    #         num_filters=args.num_filters,
-    #         log_interval=args.log_interval,
-    #         multi_view_skl=args.multi_view_skl,
-    #         mib_batch_size=args.batch_size,
-    #         mib_seq_len=args.mib_seq_len,
-    #         beta_start_value=args.beta_start_value,
-    #         beta_end_value=args.beta_end_value,
-    #         grad_clip=args.grad_clip,
-    #         kl_balancing=args.kl_balance,
-    #         builtin_encoder=args.builtin_encoder,
-    #     )
-    # elif name == 'dreamerv1' or name == 'dreamerv2':
-    #     agent = AgentDreamer(args, obs_shape, action_shape, device, args.restore_checkpoint)
-    # elif name == 'tia':
-    #     agent = AgentTIA(args, obs_shape, action_shape, device, args.restore_checkpoint)
-    # else:
-    #     assert 'agent is not supported: %s' % args.agent
-
-    return agent, name
+    return agent, agent_name
 
 def make_logdir(args):
     logdir_root = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')
@@ -389,7 +139,7 @@ def main():
     # make train and eval envs
     train_env = envs.make_env(args)
     test_env = envs.make_env(args)
-    train_env.seed(args.seed)
+    # train_env.seed(args.seed)
     obs_shape = train_env.observation_space['image'].shape
     action_shape = train_env.action_space.shape
     action_range = [float(train_env.action_space.low.min()), float(train_env.action_space.high.max())]

@@ -42,13 +42,13 @@ class AgentDBC(AgentSACBase):
         # optimizer for decoder
         self.decoder_optimizer = torch.optim.Adam(
             list(self.reward_decoder.parameters()) + list(self.transition_model.parameters()),
-            lr=self.args.decoder_lr,
+            lr=float(self.args.decoder_lr),
             weight_decay=self.args.decoder_weight_lambda
         )
 
         # optimizer for critic encoder for reconstruction loss
         self.encoder_optimizer = torch.optim.Adam(
-            self.critic.encoder.parameters(), lr=self.args.encoder_lr
+            self.critic.encoder.parameters(), lr=float(self.args.encoder_lr)
         )
 
         self.train()

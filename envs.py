@@ -14,6 +14,7 @@ GYM_ROBOT_ENV = ['Fetch']
 # -------------------------------- Make Environment from args ------------------------------------------
 
 def make_env(args):
+    
     print(args.env.split('-')[0], args.env.split('-')[:2], '-'.join(args.env.split('-')[:2]))
     if args.env.split('-')[0] in DMC_ENV:
         env = DeepMindControl(args, '-'.join(args.env.split('-')[:2]), args.seed, camera=args.camera_id)
@@ -92,7 +93,7 @@ class DeepMindControl:
         if camera is None:
           camera = dict(quadruped=2).get(domain, 0)
         self._camera = camera
-        self.seed(seed)
+        # self.seed(seed)
 
     @property
     def observation_space(self):
