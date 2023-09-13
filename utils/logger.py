@@ -13,13 +13,13 @@ from termcolor import colored
 
 class Logger:
 
-    def __init__(self, args, log_dir, n_logged_samples=10, summary_writer=None):
+    def __init__(self, log_dir, save_tb, n_logged_samples=10, summary_writer=None):
         self._log_dir = log_dir
         print('########################')
         print('logging outputs to ', log_dir)
         print('########################')
         self._n_logged_samples = n_logged_samples
-        if args.save_tb:
+        if save_tb:
             self._summ_writer = SummaryWriter(log_dir, flush_secs=1, max_queue=1)
         else:
             self._summ_writer = None

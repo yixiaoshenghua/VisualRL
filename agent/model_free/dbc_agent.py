@@ -18,8 +18,64 @@ from utils.pytorch_util import weight_init
 LOG_FREQ = 10000
 
 class AgentDBC(AgentSACBase):
-    def __init__(self, args, obs_shape, action_shape, device, restore=False):
-        super().__init__(args, obs_shape, action_shape, device)
+    def __init__(
+        self, 
+        obs_shape: int,
+        action_shape: int,
+        action_range: float,
+        transition_model_type,
+        device: Union[torch.device, str],
+        hidden_dim: int = 256,
+        discount: float = 0.99,
+        init_temperature: float = 0.01,
+        alpha_lr: float = 1e-3,
+        alpha_beta: float = 0.9,
+        actor_lr: float = 1e-3,
+        actor_beta: float = 0.9,
+        actor_log_std_min: float = -10,
+        actor_log_std_max: float = 2,
+        actor_update_freq: int = 2,
+        critic_lr: float = 1e-3,
+        critic_beta: float = 0.9,
+        critic_tau: float = 0.005,
+        critic_target_update_freq: int = 2,
+        encoder_type: str = 'pixel',
+        encoder_feature_dim: int = 50,
+        encoder_tau: float = 0.005,
+        encoder_lr: float = 1e-3,
+        decoder_lr: float = 1e-3,
+        decoder_update_freq: int = 1,
+        decoder_latent_lambda: float = 0.0,
+        decoder_weight_lambda: float = 0.0,
+        num_layers: int = 4,
+        num_filters: int = 32,
+        bisim_coef: float = 0.5,
+        builtin_encoder: bool = True
+    ):
+        super().__init__(obs_shape, 
+                         action_shape, 
+                         action_range, 
+                         device, 
+                         hidden_dim,
+                         discount, 
+                         init_temperature, 
+                         alpha_lr, 
+                         alpha_beta, 
+                         actor_lr, 
+                         actor_beta, 
+                         actor_log_std_min, 
+                         actor_log_std_max, 
+                         actor_update_freq, 
+                         critic_lr, 
+                         critic_beta, 
+                         critic_tau, 
+                         critic_target_update_freq, 
+                         encoder_type, 
+                         encoder_feature_dim, 
+                         encoder_tau, 
+                         num_layers, 
+                         num_filters, 
+                         builtin_encoder)
 
         self.decoder_update_freq = self.args.decoder_update_freq
         self.decoder_latent_lambda = self.args.decoder_latent_lambda

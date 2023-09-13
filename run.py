@@ -54,14 +54,24 @@ AGENTS = {
 
 def get_args():
     parser = argparse.ArgumentParser(description='Reproduce of multiple Visual RL algorithms.')
-    # parser.add_argument('--config', default='./arguments/sac_ae.yaml', type=str, help='YAML file for configuration')
-    parser.add_argument('--config', default='./arguments/dbc.yaml', type=str, help='YAML file for configuration')
-
-    args = parser.parse_args()
-
-    with open(args.config, 'r') as f:
+    parser.add_argument('group', type=str, help='Agent name')
+    
+    agent_name = parser.parse_args().group.lower()
+    
+    global_config_path = 'config/global.yaml'
+    agent_config_path = f'config/agents/{agent_name}.yaml'
+    
+    
+    with open(global_config_path, 'r') as f:
         config = yaml.safe_load(f)
         args = argparse.Namespace(**config)
+    
+    with open(agent_config_path, 'r') as f:
+        agent_config = yaml.safe_load(f)
+        args.agent_config = agent_config
+        
+    args.agent = agent_name
+    
     return args
 
 def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
@@ -72,34 +82,36 @@ def make_agent(obs_shape, action_shape, args, device, action_range, image_channe
         assert f"Agent {args.agent} is not supported."
     return agent, agent_name
 
-def make_logdir(args):
-    logdir_root = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logdir/')
-    os.makedirs(logdir_root, exist_ok=True)
-
+def make_logdir(env, agent, exp_name, seed):
+    logdir_root = os.path.join(os.getcwd(), 'logdir')
     ts = time.strftime("%m-%d-%H-%M-%S", time.gmtime())
-    logdir = os.path.join(logdir_root, args.env, args.agent, f"{args.exp_name}-s-{args.seed}-{ts}")
+    logdir = os.path.join(logdir_root, env, agent, f"{exp_name}-s-{seed}-{ts}")
+    video_dir = os.path.join(logdir, 'video')
+    model_dir = os.path.join(logdir, 'model')
+    buffer_dir = os.path.join(logdir, 'buffer')
+    
+    os.makedirs(logdir_root, exist_ok=True)
     os.makedirs(logdir, exist_ok=False)
-
-    video_dir = os.mkdir(os.path.join(logdir, 'video'))
-    model_dir = os.mkdir(os.path.join(logdir, 'model'))
-    buffer_dir = os.mkdir(os.path.join(logdir, 'buffer'))
+    os.makedirs(video_dir, exist_ok=True)
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(buffer_dir, exist_ok=True)
+    
     return logdir, video_dir, model_dir, buffer_dir
 
-def make_log(args, logdir):
-    return Logger(args, logdir)
+def make_log(logdir, save_tb):
+    return Logger(logdir, save_tb)
 
-def set_device(args):
-    if torch.cuda.is_available() and args.gpu != -1:
-        device = torch.device('cuda:{}'.format(args.gpu))
-        torch.cuda.manual_seed(args.seed)
+def set_device(gpu):
+    assert isinstance(gpu, int) and 0 <= gpu < torch.cuda.device_count(), f'Invalid GPU id: {gpu}'
+
+    if torch.cuda.is_available() and gpu != -1:
+        device = torch.device('cuda:{}'.format(gpu))
     else:
         device = torch.device('cpu')
+        
     return device
 
 def set_seed(seed):
-    if seed == -1:
-        seed = np.random.randint(1,1000000)
-        
     hashseed = os.getenv('PYTHONHASHSEED')
     if not hashseed:
         os.environ['PYTHONHASHSEED'] = str(seed)
@@ -115,6 +127,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     # torch.use_deterministic_algorithms(True)
 
+
 def save_args(args, logdir):
     with open(os.path.join(logdir, 'args.json'), 'w') as f:
         json.dump(vars(args), f, sort_keys=True, indent=4)
@@ -124,17 +137,24 @@ def main():
     args = get_args()
 
     # set seed
+    if not args.seed:
+        args.seed = np.random.randint(1,1000000)
     set_seed(args.seed)
 
     # set device
-    device = set_device(args)
+    device = set_device(args.gpu)
 
     # make directory
-    logdir, video_dir, model_dir, buffer_dir = make_logdir(args)
+    logdir, video_dir, model_dir, buffer_dir = make_logdir(args.env, args.agent, args.exp_name, args.seed)
+    print(logdir)
+    print(video_dir)
+    print(model_dir)
+    print(buffer_dir)
+    assert 0
 
     # make logger
     video = VideoRecorder(video_dir if args.save_video else None)
-    L = make_log(args, logdir)
+    L = make_log(logdir, args.save_tb)
 
     # make train and eval envs
     train_env = envs.make_env(args)
