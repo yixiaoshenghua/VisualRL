@@ -15,6 +15,8 @@ GYM_ROBOT_ENV = ['Fetch']
 
 def make_env(args):
     
+    env_domain, env_task = args.env.split('-')
+    
     print(args.env.split('-')[0], args.env.split('-')[:2], '-'.join(args.env.split('-')[:2]))
     if args.env.split('-')[0] in DMC_ENV:
         env = DeepMindControl(args, '-'.join(args.env.split('-')[:2]), args.seed, camera=args.camera_id)

@@ -74,13 +74,12 @@ def get_args():
     
     return args
 
-def make_agent(obs_shape, action_shape, args, device, action_range, image_channel=3):
-    agent_name = args.agent.lower()
+def make_agent(agent_name, config, obs_shape, action_shape, action_range, device, restore_checkpoint, image_channel=3):
     if agent_name in AGENTS:
-        agent = AGENTS[agent_name](args, obs_shape, action_shape, device, args.restore_checkpoint)
+        agent = AGENTS[agent_name](obs_shape, action_shape, action_range, device, restore_checkpoint, **config)
     else:
-        assert f"Agent {args.agent} is not supported."
-    return agent, agent_name
+        assert f"Agent {agent_name} is not supported."
+    return agent
 
 def make_logdir(env, agent, exp_name, seed):
     logdir_root = os.path.join(os.getcwd(), 'logdir')
@@ -150,7 +149,7 @@ def main():
     print(video_dir)
     print(model_dir)
     print(buffer_dir)
-    assert 0
+    # assert 0
 
     # make logger
     video = VideoRecorder(video_dir if args.save_video else None)
@@ -165,12 +164,14 @@ def main():
     action_range = [float(train_env.action_space.low.min()), float(train_env.action_space.high.max())]
 
     # make agent
-    agent, agent_name = make_agent(
-        obs_shape=obs_shape,
-        action_shape=action_shape,
-        args=args,
-        device=device, 
-        action_range=action_range
+    agent = make_agent(
+        args.agent,
+        args.agent_config,
+        obs_shape,
+        action_shape,
+        action_range,
+        device,
+        args.restore_checkpoint
     )
 
     # save args

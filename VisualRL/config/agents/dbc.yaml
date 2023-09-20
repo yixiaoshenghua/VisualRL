@@ -1,3 +1,4 @@
+transition_model_type: 'deterministic'
 hidden_dim: 256
 discount: 0.99
 init_temperature: 0.01

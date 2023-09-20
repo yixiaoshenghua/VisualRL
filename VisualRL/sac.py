@@ -12,12 +12,13 @@ from model.decoder import make_decoder
 LOG_FREQ = 10000
 
 
+# FIXME: This function is the same as the one in utils/pytorch_util.py
 def gaussian_logprob(noise, log_std):
     """Compute Gaussian log probability."""
     residual = (-0.5 * noise.pow(2) - log_std).sum(-1, keepdim=True)
     return residual - 0.5 * np.log(2 * np.pi) * noise.size(-1)
 
-
+# FIXME: This function is the same as the one in utils/pytorch_util.py
 def squash(mu, pi, log_pi):
     """Apply squashing function.
     See appendix C from https://arxiv.org/pdf/1812.05905.pdf.
