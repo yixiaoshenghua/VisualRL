@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import utils.util as util
-from sac import  Actor, Critic, weight_init, LOG_FREQ
+from VisualRL.sac import  Actor, Critic, weight_init, LOG_FREQ
 from model.transition_model import make_transition_model
 from model.decoder import make_decoder
 

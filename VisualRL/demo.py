@@ -4,9 +4,9 @@ import os
 import argparse
 import torch
 from agent import Agent
-from envs import DMC, wrapper
+from VisualRL.envs import DMC, wrapper
 from logger import Logger
-from eval import evaluate
+from VisualRL.eval import evaluate
 
 def get_args():
     return args

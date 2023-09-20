@@ -15,7 +15,7 @@ import tqdm
 import utils.util as util
 from utils.logger import Logger
 from utils.video import VideoRecorder
-import envs
+import VisualRL.envs as envs
 
 from agent.model_free.sacae_agent import AgentSACAE
 from agent.model_free.flare_agent import AgentFLARE
@@ -31,7 +31,7 @@ from agent.model_based.tia_agent import AgentTIA
 
 import numpy as np
 
-from eval import make_eval
+from VisualRL.eval import make_eval
 
 #TODO: Set the environment variable of OpenGL here
 # os.environ['MUJOCO_GL'] = 'egl'

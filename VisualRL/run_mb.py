@@ -8,7 +8,7 @@ import torch
 import tqdm
 
 from collections import OrderedDict
-import envs
+import VisualRL.envs as envs
 
 from utils.logger import Logger
 from utils.video import VideoRecorder
@@ -17,7 +17,7 @@ import utils
 from agent.model_based.dreamer_agent import AgentDreamer
 from agent.model_based.tia_agent import AgentTIA
 
-from eval import make_eval
+from VisualRL.eval import make_eval
 
 os.environ['MUJOCO_GL'] = 'egl' # glfw, egl, osmesa
 
