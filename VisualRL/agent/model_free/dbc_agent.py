@@ -13,6 +13,7 @@ from model.critic import Critic
 from model.transition_model import make_transition_model
 from agent.model_free.base_agent import AgentSACBase
 from utils.pytorch_util import weight_init
+from VisualRL.utils.replay_buffer import ReplayBuffer
 
 
 LOG_FREQ = 10000
@@ -24,6 +25,8 @@ class AgentDBC(AgentSACBase):
         action_shape: int,
         action_range: float,
         device: Union[torch.device, str],
+        restore_checkpoint: bool,
+        agent_name: str,
         transition_model_type: str,
         hidden_dim: int = 256,
         discount: float = 0.99,
@@ -50,46 +53,54 @@ class AgentDBC(AgentSACBase):
         num_layers: int = 4,
         num_filters: int = 32,
         bisim_coef: float = 0.5,
-        builtin_encoder: bool = True
+        builtin_encoder: bool = True,
+        frame_stack: int = 3,
+        image_size: int = 84
+    
     ):
-        super().__init__(obs_shape, 
-                         action_shape, 
-                         action_range, 
-                         device, 
-                         hidden_dim,
-                         discount, 
-                         init_temperature, 
-                         alpha_lr, 
-                         alpha_beta, 
-                         actor_lr, 
-                         actor_beta, 
-                         actor_log_std_min, 
-                         actor_log_std_max, 
-                         actor_update_freq, 
-                         critic_lr, 
-                         critic_beta, 
-                         critic_tau, 
-                         critic_target_update_freq, 
-                         encoder_type, 
-                         encoder_feature_dim, 
-                         encoder_tau, 
-                         num_layers, 
-                         num_filters, 
-                         builtin_encoder)
-
-        self.decoder_update_freq = self.args.decoder_update_freq
-        self.decoder_latent_lambda = self.args.decoder_latent_lambda
-        self.transition_model_type = self.args.transition_model_type
-        self.bisim_coef = self.args.bisim_coef
+        super().__init__(
+            obs_shape, 
+            action_shape, 
+            action_range, 
+            device, 
+            agent_name,
+            hidden_dim,
+            discount, 
+            init_temperature, 
+            alpha_lr, 
+            alpha_beta, 
+            actor_lr, 
+            actor_beta, 
+            actor_log_std_min, 
+            actor_log_std_max, 
+            actor_update_freq, 
+            critic_lr, 
+            critic_beta, 
+            critic_tau, 
+            critic_target_update_freq, 
+            encoder_type, 
+            encoder_feature_dim, 
+            encoder_tau, 
+            num_layers, 
+            num_filters, 
+            builtin_encoder
+        )
+        self.encoder_lr = encoder_lr
+        self.decoder_lr = decoder_lr
+        self.decoder_update_freq = decoder_update_freq
+        self.decoder_latent_lambda = decoder_latent_lambda
+        self.decoder_weight_lambda = decoder_weight_lambda
+        self.transition_model_type = transition_model_type
+        self.bisim_coef = bisim_coef
 
         self.transition_model = make_transition_model(
-            self.args.transition_model_type, 
-            self.args.encoder_feature_dim, 
+            self.transition_model_type, 
+            self.encoder_feature_dim, 
             action_shape
         ).to(device)
 
         self.reward_decoder = nn.Sequential(
-            nn.Linear(self.args.encoder_feature_dim, 512),
+            nn.Linear(self.encoder_feature_dim, 512),
             nn.LayerNorm(512),
             nn.ReLU(),
             nn.Linear(512, 1)
@@ -98,17 +109,19 @@ class AgentDBC(AgentSACBase):
         # optimizer for decoder
         self.decoder_optimizer = torch.optim.Adam(
             list(self.reward_decoder.parameters()) + list(self.transition_model.parameters()),
-            lr=float(self.args.decoder_lr),
-            weight_decay=self.args.decoder_weight_lambda
+            lr=float(self.decoder_lr),
+            weight_decay=self.decoder_weight_lambda
         )
 
         # optimizer for critic encoder for reconstruction loss
         self.encoder_optimizer = torch.optim.Adam(
-            self.critic.encoder.parameters(), lr=float(self.args.encoder_lr)
+            self.critic.encoder.parameters(), 
+            lr=float(self.encoder_lr)
         )
 
         self.train()
         self.critic_target.train()
+        
 
     def train(self, training=True):
         self.training = training
@@ -119,14 +132,12 @@ class AgentDBC(AgentSACBase):
         with torch.no_grad():
             _, policy_action, log_pi, _ = self.actor(next_obs)
             target_Q1, target_Q2 = self.critic_target(next_obs, policy_action)
-            target_V = torch.min(target_Q1,
-                                 target_Q2) - self.alpha.detach() * log_pi
+            target_V = torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi
             target_Q = reward + (not_done * self.discount * target_V)
 
         # get current Q estimates
         current_Q1, current_Q2 = self.critic(obs, action, detach_encoder=False)
-        critic_loss = F.mse_loss(current_Q1,
-                                 target_Q) + F.mse_loss(current_Q2, target_Q)
+        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
 
         # Optimize the critic
         self.critic_optimizer.zero_grad()
@@ -236,8 +247,7 @@ class AgentDBC(AgentSACBase):
                 self.critic.encoder, self.critic_target.encoder,
                 self.encoder_tau
             )
-
-            
+      
     def save(self, model_dir, step):
         torch.save(
             self.actor.state_dict(), '%s/actor_%s.pt' % (model_dir, step)

@@ -8,7 +8,7 @@ import torch.distributions as distributions
 
 from utils.replay_buffer import ReplayBuffer
 from model.models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
-from utils import FreezeParameters, compute_return, preprocess_obs
+from utils.util import FreezeParameters, compute_return, preprocess_obs
 
 
 class AgentDreamer:

@@ -12,10 +12,12 @@ import yaml
 import copy
 import tqdm
 
-import utils.util as util
+import VisualRL.utils.util as util
+from utils.replay_buffer import make_replay_buffer
+from utils.util import eval_mode
 from utils.logger import Logger
 from utils.video import VideoRecorder
-import VisualRL.envs as envs
+import envs as envs
 
 from agent.model_free.sacae_agent import AgentSACAE
 from agent.model_free.flare_agent import AgentFLARE
@@ -58,8 +60,8 @@ def get_args():
     
     agent_name = parser.parse_args().group.lower()
     
-    global_config_path = 'config/global.yaml'
-    agent_config_path = f'config/agents/{agent_name}.yaml'
+    global_config_path = 'VisualRL/config/global.yaml'
+    agent_config_path = f'VisualRL/config/agents/{agent_name}.yaml'
     
     
     with open(global_config_path, 'r') as f:
@@ -75,8 +77,15 @@ def get_args():
     return args
 
 def make_agent(agent_name, config, obs_shape, action_shape, action_range, device, restore_checkpoint, image_channel=3):
-    if agent_name in AGENTS:
-        agent = AGENTS[agent_name](obs_shape, action_shape, action_range, device, restore_checkpoint, **config)
+    if agent_name in AGENTS:       
+        agent = AGENTS[agent_name](
+            obs_shape=obs_shape,
+            action_shape=action_shape, 
+            action_range=action_range, 
+            device=device, 
+            restore_checkpoint=restore_checkpoint, 
+            **config
+        )
     else:
         assert f"Agent {agent_name} is not supported."
     return agent

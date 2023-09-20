@@ -9,6 +9,7 @@ import kornia
 import copy
 from utils.data_augs import center_crop_images, random_crop
 
+# FIXME: we may not need this
 def make_replay_buffer(args, action_shape, device):
     if args.agent.lower() == 'curl':
         replay_buffer = ReplayBuffer(
@@ -24,7 +25,7 @@ def make_replay_buffer(args, action_shape, device):
             obs_shape=(3*args.frame_stack, args.pre_transform_image_size, args.pre_transform_image_size), 
             action_shape=action_shape, 
             capacity=args.buffer_size, 
-            batch_size=args.batch_size, 
+            batch_size=args.batch_size,
             device=device, 
             seq_len=args.train_seq_len
         )

@@ -11,106 +11,137 @@ from utils.replay_buffer import make_replay_buffer
 from model.actor import Actor
 from model.critic import Critic
 from utils.pytorch_util import weight_init
+from VisualRL.utils.replay_buffer import ReplayBuffer
 
 LOG_FREQ = 10000
 
 class AgentBase:
     def __init__(
-        self, 
-        args,
-        obs_shape: int, 
-        action_shape: int, 
-        device: Union[torch.device, str], 
+            self,
+            obs_shape: int, 
+            action_shape: int, 
+            device: Union[torch.device, str],
+            agent_name: str, 
+            hidden_dim: int,
+            discount: float,
+            actor_lr: float,
+            actor_beta: float,
+            actor_log_std_min: float,
+            actor_log_std_max: float,
+            actor_update_freq: float,
+            critic_lr: float,
+            critic_beta: float,
+            critic_tau: float,
+            critic_target_update_freq: int,
+            encoder_type: float,
+            encoder_feature_dim: float,
+            encoder_tau: float,
+            num_layers: int,
+            num_filters: int,
+            builtin_encoder: bool
         ):
-        self.args = args
+        self.obs_shape = obs_shape,
+        self.action_shape = action_shape,
         self.device = device
-
-        self.hidden_dim = self.args.hidden_dim
-        self.discount = self.args.discount
-        self.actor_lr = self.args.actor_lr
-        self.actor_beta = self.args.actor_beta
-        self.actor_log_std_min = self.args.actor_log_std_min
-        self.actor_log_std_max = self.args.actor_log_std_max
-        self.actor_update_freq = self.args.actor_update_freq
-        self.critic_lr = self.args.critic_lr
-        self.critic_beta = self.args.critic_beta
-        self.critic_tau = self.args.critic_tau
-        self.critic_target_update_freq = self.args.critic_target_update_freq
-        self.encoder_type = self.args.encoder_type
-        self.encoder_feature_dim = self.args.encoder_feature_dim
-        self.encoder_tau = self.args.encoder_tau
-        self.num_layers = self.args.num_layers
-        self.num_filters = self.args.num_filters
-        self.builtin_encoder = self.args.builtin_encoder
+        self.agent_name = agent_name
+        self.hidden_dim = hidden_dim
+        self.discount = discount
+        self.actor_lr = actor_lr
+        self.actor_beta = actor_beta
+        self.actor_log_std_min = actor_log_std_min
+        self.actor_log_std_max = actor_log_std_max
+        self.actor_update_freq = actor_update_freq
+        self.critic_lr = critic_lr
+        self.critic_beta = critic_beta
+        self.critic_tau = critic_tau
+        self.critic_target_update_freq = critic_target_update_freq
+        self.encoder_type = encoder_type
+        self.encoder_feature_dim = encoder_feature_dim
+        self.encoder_tau = encoder_tau
+        self.num_layers = num_layers
+        self.num_filters = num_filters
+        self.builtin_encoder = builtin_encoder
 
         # CURL doesn't add the tanh nonlinearity to the output of the fc layer
-        self.output_logits = True if args.agent.lower() == 'curl' else False
+        self.output_logits = (agent_name == 'curl')
 
-        self.critic = self._build_critic(args, obs_shape, action_shape, 
-                                         self.hidden_dim, 
-                                         self.encoder_type,
-                                         self.encoder_feature_dim, 
-                                         self.num_layers, 
-                                         self.num_filters, 
-                                         self.output_logits,
-                                         self.builtin_encoder)
-        self.critic_target = self._build_critic_target(args, obs_shape, action_shape, 
-                                                       self.hidden_dim, 
-                                                       self.encoder_type,
-                                                       self.encoder_feature_dim, 
-                                                       self.num_layers, 
-                                                       self.num_filters, 
-                                                       self.output_logits,
-                                                       self.builtin_encoder)
-        self.actor = self._build_actor(args, obs_shape, action_shape, 
-                                       self.hidden_dim, 
-                                       self.encoder_type, 
-                                       self.encoder_feature_dim, 
-                                       self.actor_log_std_min, 
-                                       self.actor_log_std_max,
-                                       self.num_layers, 
-                                       self.num_filters, 
-                                       self.output_logits,
-                                       self.builtin_encoder)
+        self.critic = self._build_critic()
+        self.critic_target = self._build_critic_target()
+        self.actor = self._build_actor()
         # build optimizer
         self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.actor_lr, betas=(self.actor_beta, 0.999)
+            self.actor.parameters(), 
+            lr=self.actor_lr, 
+            betas=(self.actor_beta, 0.999)
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=self.critic_lr, betas=(self.critic_beta, 0.999)
+            self.critic.parameters(), 
+            lr=self.critic_lr, 
+            betas=(self.critic_beta, 0.999)
         )
-        self.data_buffer = make_replay_buffer(args, action_shape, device)
+        self.data_buffer = self._make_replay_buffer()
 
-    def _build_actor(self, args, obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, output_logits, builtin_encoder=True):
+    def _build_actor(self):
         actor = Actor(
-            args, obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, actor_log_std_min, actor_log_std_max,
-            num_layers, num_filters, output_logits, builtin_encoder
+            self.obs_shape,
+            self.action_shape,
+            self.agent_name,
+            self.hidden_dim,
+            self.encoder_type,
+            self.encoder_feature_dim,
+            self.actor_log_std_min,
+            self.actor_log_std_max,
+            self.num_layers,
+            self.num_filters,
+            self.output_logits,
+            self.builtin_encoder
         ).to(self.device)
         
         # tie encoders between actor and critic
         actor.encoder.copy_conv_weights_from(self.critic.encoder)
         return actor
 
-    def _build_critic(self, args, obs_shape, action_shape, hidden_dim, encoder_type, encoder_feature_dim,    
-            num_layers, num_filters, output_logits, builtin_encoder=True):
+    def _build_critic(self):
         critic = Critic(
-            args, obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder
+            self.obs_shape,
+            self.action_shape,
+            self.agent_name,
+            self.hidden_dim,
+            self.encoder_type,
+            self.encoder_feature_dim,
+            self.num_layers,
+            self.num_filters,
+            self.output_logits,
+            self.builtin_encoder
         ).to(self.device)
         return critic
 
 
-    def _build_critic_target(self, args, obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder=True):
+    def _build_critic_target(self):
         critic_target = Critic(
-            args, obs_shape, action_shape, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder
+            self.obs_shape,
+            self.action_shape,
+            self.agent_name,
+            self.hidden_dim,
+            self.encoder_type,
+            self.encoder_feature_dim,
+            self.num_layers,
+            self.num_filters,
+            self.output_logits,
+            self.builtin_encoder
         ).to(self.device)
         critic_target.load_state_dict(self.critic.state_dict())
         return critic_target
+    
+    def _make_replay_buffer(self):
+        return ReplayBuffer(
+            (3 * self.frame_stack, self.image_size, self.image_size),
+            self.action_shape,
+            self.buffer_size,
+            self.buffer_size,
+            self.batch_size,
+            self.device
+        )
 
     def train(self, training=True):
         self.training = training
@@ -243,29 +274,70 @@ class AgentBase:
 class AgentSACBase(AgentBase):
     def __init__(
         self, 
-        args,
         obs_shape: int,
         action_shape: int,
+        action_range: float,
         device: Union[torch.device, str],
+        agent_name: str,
+        hidden_dim: int,
+        discount: float,
+        init_temperature: float, 
+        alpha_lr: float, 
+        alpha_beta: float, 
+        actor_lr: float, 
+        actor_beta: float, 
+        actor_log_std_min: float, 
+        actor_log_std_max: float,   
+        actor_update_freq: float, 
+        critic_lr: float, 
+        critic_beta: float, 
+        critic_tau: float, 
+        critic_target_update_freq: int,
+        encoder_type: float,
+        encoder_feature_dim: float, 
+        encoder_tau: float, 
+        num_layers: int, 
+        num_filters: int, 
+        builtin_encoder: bool
     ):
-        super().__init__(args, obs_shape, action_shape, device)
+        super().__init__(
+            obs_shape,
+            action_shape,
+            device,
+            agent_name,
+            hidden_dim,
+            discount,
+            actor_lr,
+            actor_beta,
+            actor_log_std_min,
+            actor_log_std_max,
+            actor_update_freq,
+            critic_lr,
+            critic_beta,
+            critic_tau,
+            critic_target_update_freq,
+            encoder_type,
+            encoder_feature_dim,
+            encoder_tau,
+            num_layers,
+            num_filters,
+            builtin_encoder
+        )
 
-        self.init_temperature = self.args.init_temperature
-        self.alpha_lr = self.args.alpha_lr
-        self.alpha_beta = self.args.alpha_beta
+        self.init_temperature = self.init_temperature
+        self.alpha_lr = self.alpha_lr
+        self.alpha_beta = self.alpha_beta
 
-        self.log_alpha = self._build_log_alpha(self.init_temperature, 
-                                               self.action_shape)
+        self.log_alpha = self._build_log_alpha()
         self.log_alpha_optimizer = torch.optim.Adam(
             [self.log_alpha], lr=self.alpha_lr, betas=(self.alpha_beta, 0.999)
         )
-        self.data_buffer = make_replay_buffer(args, action_shape, device)
 
-    def _build_log_alpha(self, init_temperature, action_shape):
-        log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
+    def _build_log_alpha(self):
+        log_alpha = torch.tensor(np.log(self.init_temperature)).to(self.device)
         log_alpha.requires_grad = True
         # set target entropy to -|A|
-        self.target_entropy = -np.prod(action_shape)
+        self.target_entropy = -np.prod(self.action_shape)
         return log_alpha        
 
     def train(self, training=True):
