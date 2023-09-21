@@ -55,8 +55,9 @@ class AgentDBC(AgentSACBase):
         bisim_coef: float = 0.5,
         builtin_encoder: bool = True,
         frame_stack: int = 3,
-        image_size: int = 84
-    
+        image_size: int = 84,
+        buffer_size: int = 100000,
+        batch_size: int = 128
     ):
         super().__init__(
             obs_shape, 
@@ -83,7 +84,11 @@ class AgentDBC(AgentSACBase):
             encoder_tau, 
             num_layers, 
             num_filters, 
-            builtin_encoder
+            builtin_encoder,
+            frame_stack,
+            image_size,
+            buffer_size,
+            batch_size,
         )
         self.encoder_lr = encoder_lr
         self.decoder_lr = decoder_lr

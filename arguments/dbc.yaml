@@ -21,17 +21,17 @@ init_steps: 1000
 total_steps: 1000000
 update_steps: 1
 # ---------------------------Optimization---------------------------
-actor_lr: 1e-3
+actor_lr: 1.0e-3
 actor_beta: 0.9
 
-critic_lr: 1e-3
+critic_lr: 1.0e-3
 critic_beta: 0.9
 
-alpha_lr: 1e-3
+alpha_lr: 1.0e-3
 alpha_beta: 0.9
 
-encoder_lr: 1e-3
-decoder_lr: 1e-3
+encoder_lr: 1.0e-3
+decoder_lr: 1.0e-3
 # ------------------------------Actor------------------------------
 actor_log_std_min: -10
 actor_log_std_max: 2
@@ -62,23 +62,23 @@ decoder_weight_lambda: 1.0e-7
 discount: 0.99
 init_temperature: 0.1
 # ------------------------Saving and logging------------------------
-log_interval: 100
-save_tb: False
+# log_interval: 100
+# save_tb: False
 
-save_video: False
-log_video_freq: -1
-max_videos_to_save: 2
+# save_video: False
+# log_video_freq: -1
+# max_videos_to_save: 2
 
-save_data: False
-save_data_interval: 100000
-save_data_path: ''
+# save_data: False
+# save_data_interval: 100000
+# save_data_path: ''
 
-save_checkpoint: False
-save_checkpoint_interval: 100000
-save_checkpoint_path: ''
+# save_checkpoint: False
+# save_checkpoint_interval: 100000
+# save_checkpoint_path: ''
 # ------------------------Restore parameters------------------------
-restore_data: False
-restore_data_path: ''
+# restore_data: False
+# restore_data_path: ''
 
-restore_checkpoint: False
-restore_checkpoint_path: ''
+# restore_checkpoint: False
+# restore_checkpoint_path: ''

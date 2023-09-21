@@ -38,10 +38,14 @@ class AgentBase:
             encoder_tau: float,
             num_layers: int,
             num_filters: int,
-            builtin_encoder: bool
+            builtin_encoder: bool,
+            frame_stack: int,
+            image_size: int,
+            buffer_size: int,
+            batch_size: int
         ):
-        self.obs_shape = obs_shape,
-        self.action_shape = action_shape,
+        self.obs_shape = obs_shape
+        self.action_shape = action_shape
         self.device = device
         self.agent_name = agent_name
         self.hidden_dim = hidden_dim
@@ -61,6 +65,10 @@ class AgentBase:
         self.num_layers = num_layers
         self.num_filters = num_filters
         self.builtin_encoder = builtin_encoder
+        self.frame_stack = frame_stack
+        self.image_size = image_size
+        self.buffer_size = buffer_size
+        self.batch_size = batch_size
 
         # CURL doesn't add the tanh nonlinearity to the output of the fc layer
         self.output_logits = (agent_name == 'curl')
@@ -298,7 +306,11 @@ class AgentSACBase(AgentBase):
         encoder_tau: float, 
         num_layers: int, 
         num_filters: int, 
-        builtin_encoder: bool
+        builtin_encoder: bool,
+        frame_stack: int,
+        image_size: int,
+        buffer_size: int,
+        batch_size: int
     ):
         super().__init__(
             obs_shape,
@@ -321,12 +333,16 @@ class AgentSACBase(AgentBase):
             encoder_tau,
             num_layers,
             num_filters,
-            builtin_encoder
+            builtin_encoder,
+            frame_stack,
+            image_size,
+            buffer_size,
+            batch_size
         )
 
-        self.init_temperature = self.init_temperature
-        self.alpha_lr = self.alpha_lr
-        self.alpha_beta = self.alpha_beta
+        self.init_temperature = init_temperature
+        self.alpha_lr = alpha_lr
+        self.alpha_beta = alpha_beta
 
         self.log_alpha = self._build_log_alpha()
         self.log_alpha_optimizer = torch.optim.Adam(

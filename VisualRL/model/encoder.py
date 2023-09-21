@@ -22,14 +22,11 @@ class PixelEncoder(nn.Module):
     """Convolutional encoder of pixels observations."""
     def __init__(self, obs_shape, feature_dim, num_layers=2, num_filters=32, output_logits=False):
         super().__init__()
-
         assert len(obs_shape) == 3
         self.obs_shape = obs_shape
         self.feature_dim = feature_dim
         self.num_layers = num_layers
 
-        print(obs_shape[0])
-        assert 0
         self.convs = nn.ModuleList(
             [nn.Conv2d(obs_shape[0], num_filters, 3, stride=2)]
         )
@@ -451,8 +448,13 @@ class ViTEncoder(nn.Module):
                 L.log_image('train_encoder/%s_img' % k, v[0], step)
 
 
-_AVAILABLE_ENCODERS = {'pixel': PixelEncoder, 'identity': IdentityEncoder, 'rssm': RSSMEncoder,
-    'carla_rssm': RSSMCarlaEncoder, 'vit': ViTEncoder}
+_AVAILABLE_ENCODERS = {
+    'pixel': PixelEncoder, 
+    'identity': IdentityEncoder, 
+    'rssm': RSSMEncoder,
+    'carla_rssm': RSSMCarlaEncoder, 
+    'vit': ViTEncoder
+}
 
 
 def make_encoder(
