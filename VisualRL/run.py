@@ -38,6 +38,8 @@ from VisualRL.eval import make_eval
 #TODO: Set the environment variable of OpenGL here
 # os.environ['MUJOCO_GL'] = 'egl'
 os.environ['MUJOCO_GL'] = 'glfw'
+# os.environ['MUJOCO_GL'] = 'osmesa'
+
 
 AGENTS = {
     "baseline": BaselineAgent,

@@ -134,6 +134,7 @@ class DeepMindControl:
           raise ValueError("Only render mode 'rgb_array' is supported.")
         # if self.args.change_camera_freq > 0:
         #     return self._env.physics.render(*self._size, camera_id=int(int(self._steps//self.args.change_camera_freq)%2))
+        print(self._camera)
         return self._env.physics.render(*self._size, camera_id=self._camera)
 
 class Claw:
