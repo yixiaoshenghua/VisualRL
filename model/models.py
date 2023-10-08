@@ -1,10 +1,21 @@
 import numpy as np
+from math import sqrt
+import math
+from numbers import Number
 import torch
 import torch.nn as nn
+from torch.distributions import Distribution, constraints
+from torch.distributions.utils import broadcast_all
 import torch.nn.functional as F
 import torch.distributions as distributions
-from torch.distributions import constraints
 from torch.distributions.transformed_distribution import TransformedDistribution
+from utils import chi2_divergence, kl_div_sample
+
+CONST_SQRT_2 = math.sqrt(2)
+CONST_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
+CONST_INV_SQRT_2 = 1 / math.sqrt(2)
+CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
+CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
 
 _str_to_activation = {
     'relu': nn.ReLU(),
@@ -17,10 +28,60 @@ _str_to_activation = {
     'identity': nn.Identity(),
 }
 
+class LRU(nn.Module):
+    def __init__(self, in_features, out_features, state_features=10, rmin=0, rmax=1, max_phase=6.283):
+        super().__init__()
+        self.out_features = out_features
+        self.D = nn.Parameter(torch.randn([out_features, in_features]) / math.sqrt(in_features))
+        u1 = torch.rand(state_features)
+        u2 = torch.rand(state_features)
+        self.nu_log = nn.Parameter(torch.log(-0.5 * torch.log(u1 * (rmax + rmin) * (rmax - rmin) + rmin**2)))
+        self.theta_log = nn.Parameter(torch.log(max_phase * u2))
+        Lambda_mod = torch.exp(-torch.exp(self.nu_log))
+        self.gamma_log = nn.Parameter(torch.log(torch.sqrt(torch.ones_like(Lambda_mod) - torch.square(Lambda_mod))))
+        B_re = torch.randn([state_features, in_features]) / math.sqrt(2 * in_features)
+        B_im = torch.randn([state_features, in_features]) / math.sqrt(2 * in_features)
+        self.B = nn.Parameter(torch.complex(B_re, B_im))
+        C_re = torch.randn([out_features, state_features]) / math.sqrt(state_features)
+        C_im = torch.randn([out_features, state_features]) / math.sqrt(state_features)
+        self.C = nn.Parameter(torch.complex(C_re, C_im))
+        self.state = torch.complex(torch.zeros(state_features), torch.zeros(state_features))
+
+    def forward(self, input, state=None):
+        self.state = self.state.to(self.B.device) if state is None else state
+        Lambda_mod = torch.exp(-torch.exp(self.nu_log))
+        Lambda_re = Lambda_mod * torch.cos(torch.exp(self.theta_log))
+        Lambda_im = Lambda_mod * torch.sin(torch.exp(self.theta_log))
+        Lambda = torch.complex(Lambda_re, Lambda_im)
+        Lambda = Lambda.to(self.state.device)
+        gammas = torch.exp(self.gamma_log).unsqueeze(-1).to(self.B.device)
+        gammas = gammas.to(self.state.device)
+        output = torch.empty([i for i in input.shape[:-1]] + [self.out_features], device=self.B.device)
+        # Handle input of (Batches, Seq_length, Input size)
+        if input.dim() == 3:
+            for i in range(input.shape[0]):
+                batch = input[i]
+                out_seq = torch.empty(input.shape[1], self.out_features)
+                for j, step in enumerate(batch):
+                    self.state = (Lambda * self.state + gammas * self.B @ step.to(dtype=self.B.dtype))
+                    out_step = (self.C @ self.state).real + self.D @ step
+                    out_seq[j] = out_step
+                self.state = torch.complex(torch.zeros_like(self.state.real), torch.zeros_like(self.state.real))
+                output[i] = out_seq
+        # Handle input of (Seq_length, Input size)
+        if input.dim() == 2:
+            for i in range(input.shape[0]):
+                step = input[i]
+                self.state = (Lambda * self.state + gammas * self.B @ step.to(dtype=self.B.dtype))
+                out_step = (self.C @ self.state).real + self.D @ step
+                output[i] = out_step
+            self.state = torch.complex(torch.zeros_like(self.state.real), torch.zeros_like(self.state.real))
+        return output
+
 
 class RSSM(nn.Module):
 
-    def __init__(self, action_size, stoch_size, deter_size, hidden_size, obs_embed_size, activation, discrete=False):
+    def __init__(self, action_size, stoch_size, deter_size, hidden_size, obs_embed_size, activation, ensemble=1, discrete=False, reverse=False, future=False, normalizing_flow=False, rnn_type='GRU', device='cpu'):
 
         super().__init__()
 
@@ -30,15 +91,27 @@ class RSSM(nn.Module):
         self.hidden_size = hidden_size  # intermediate fc_layers hidden units 
         self.embedding_size = obs_embed_size
         self.discrete = discrete
+        self.ensemble = ensemble # ensemble prediction for Plan2Explore
+        self.normalizing_flow = normalizing_flow # change the gaussian distribution into normalizing flows
+        self.device = device
+        self.reverse = reverse
+        if self.reverse:
+            self.reverse_rnn = nn.GRUCell(self.deter_size, self.deter_size)
+        self.future = future
+        if self.future:
+            self.attention = nn.MultiheadAttention(self.embedding_size, num_heads=8)
 
         self.act_fn = _str_to_activation[activation]
-        self.rnn = nn.GRUCell(self.deter_size, self.deter_size)
+        if rnn_type == 'GRU':
+            self.rnn = nn.GRUCell(self.deter_size, self.deter_size)
+        elif rnn_type == 'LRU':
+            self.rnn = LRU(self.deter_size, self.deter_size, self.hidden_size)
 
         self.fc_state_action = nn.Linear(self.stoch_size + self.action_size, self.deter_size) if not self.discrete \
                             else nn.Linear(self.stoch_size*self.discrete + self.action_size, self.deter_size)
-        self.fc_embed_prior = nn.Linear(self.deter_size, self.hidden_size)
-        self.fc_state_prior  = nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
-                            else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)
+        self.fc_embed_priors = nn.ModuleList([nn.Linear(self.deter_size, self.hidden_size) for _ in range(self.ensemble)])
+        self.fc_state_priors = nn.ModuleList([nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
+                            else nn.Linear(self.hidden_size, self.stoch_size*self.discrete) for _ in range(self.ensemble)])
         self.fc_embed_posterior = nn.Linear(self.embedding_size + self.deter_size, self.hidden_size)
         self.fc_state_posterior = nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
                             else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)
@@ -49,13 +122,15 @@ class RSSM(nn.Module):
             return dict(
                 logit = torch.zeros(batch_size, self.stoch_size, self.discrete).to(device),
                 stoch = torch.zeros(batch_size, self.stoch_size, self.discrete).to(device),
-                deter = torch.zeros(batch_size, self.deter_size).to(device))
+                deter = torch.zeros(batch_size, self.deter_size).to(device),
+                log_prob = torch.zeros(batch_size, 1).to(device))
         else:   
             return dict(
                 mean = torch.zeros(batch_size, self.stoch_size).to(device),
                 std  = torch.zeros(batch_size, self.stoch_size).to(device),
                 stoch = torch.zeros(batch_size, self.stoch_size).to(device),
-                deter = torch.zeros(batch_size, self.deter_size).to(device))
+                deter = torch.zeros(batch_size, self.deter_size).to(device),
+                log_prob = torch.zeros(batch_size, 1).to(device))
 
     def get_feat(self, state):
         stoch = state['stoch']
@@ -63,42 +138,50 @@ class RSSM(nn.Module):
             stoch = stoch.reshape(*stoch.shape[:-2], self.stoch_size * self.discrete)
         return torch.cat([stoch, state['deter']], -1)
 
+    def flat_feat(self, feat):
+        T, B, e = feat.shape
+        return feat.reshape((T*B, -1))
+
     def get_dist(self, state):
         if self.discrete:
             logit = state['logit'].float()
-            distribution = OneHotDist(logit)
+            distribution = OneHotDist(logit) # Quantization
         else:
             mean, std = state['mean'], state['std']
             distribution = distributions.Normal(mean, std)
-        distribution = distributions.independent.Independent(distribution, 1)
+        distribution = Independent(distribution, 1)
         return distribution
 
-    def observe_step(self, prev_state, prev_action, obs_embed, nonterm=1.0):
+    def observe_step(self, prev_state, prev_action, obs_embed, nonterm=1.0, reverse=False):
 
-        prior = self.imagine_step(prev_state, prev_action, nonterm)
-        posterior_embed = self.act_fn(self.fc_embed_posterior(torch.cat([obs_embed, prior['deter']], dim=-1)))
-        posterior = self.fc_state_posterior(posterior_embed)
+        prior = self.imagine_step(prev_state, prev_action, nonterm, reverse) # h_t, \hat{z}_t <- p_{phi}(\hat{z}_t | f_{phi}([h_{t-1}, z_{t-1}], a_{t-1}))
+        posterior_embed = self.act_fn(self.fc_embed_posterior(torch.cat([obs_embed, prior['deter']], dim=-1))) # z_t ~ q_{phi}(z_t | h_t, x_t)
+        posterior = self.fc_state_posterior(posterior_embed) 
         stats = self.suff_stats_layer(posterior)
-        stoch = self.get_dist(stats).sample()
-
-        posterior = {'stoch': stoch, 'deter': prior['deter'], **stats}
+        stoch = self.get_dist(stats).rsample()
+        log_prob = self.get_dist(stats).log_prob(stoch).unsqueeze(-1)
+        posterior = {'stoch': stoch, 'deter': prior['deter'], 'log_prob': log_prob, **stats}
         return prior, posterior
 
-    def imagine_step(self, prev_state, prev_action, nonterm=1.0):
-        prev_stoch = prev_state['stoch']
+    def imagine_step(self, prev_state, prev_action, nonterm=1.0, reverse=False):
+        prev_stoch = prev_state['stoch'] # (B, s)
         if self.discrete:
             prev_stoch = prev_stoch.reshape(*prev_stoch.shape[:-2], self.stoch_size*self.discrete)
-        state_action = self.act_fn(self.fc_state_action(torch.cat([prev_stoch*nonterm, prev_action], dim=-1)))
-        deter = self.rnn(state_action, prev_state['deter']*nonterm)
-        prior_embed = self.act_fn(self.fc_embed_prior(deter))
-        prior = self.fc_state_prior(prior_embed)
-        stats = self.suff_stats_layer(prior)
-        stoch = self.get_dist(stats).sample()
-
-        prior = {'stoch': stoch, 'deter': deter, **stats}
+        state_action = self.act_fn(self.fc_state_action(torch.cat([prev_stoch*nonterm, prev_action], dim=-1))) # za_{t-1}=[z_{t-1}, a_{t-1}]
+        deter = self.rnn(state_action, prev_state['deter']*nonterm) if not reverse else self.reverse_rnn(state_action, prev_state['deter']*nonterm) # (B, h) h_t = f_{phi}(h_{t-1}, za_{t-1})
+        stats = self.suff_stats_ensemble(deter) # \hat{z}_t ~ p_{phi}(\hat{z}_t | h_t)
+        index = np.random.choice(np.arange(self.ensemble))
+        stats = {k: v[index] for k, v in stats.items()} # (B, ...)
+        stoch = self.get_dist(stats).rsample()
+        log_prob = self.get_dist(stats).log_prob(stoch).unsqueeze(-1)
+        prior = {'stoch': stoch, 'deter': deter, 'log_prob': log_prob, **stats}
         return prior
 
     def suff_stats_layer(self, x):
+        '''
+        x: the output logit by the prior or posterior network
+        NOTE: we can add some complex distribution transformations here like normalizing flows.
+        '''
         if self.discrete:
             logit = x.reshape(*x.shape[:-1], self.stoch_size, self.discrete)
             return {'logit': logit}
@@ -107,79 +190,161 @@ class RSSM(nn.Module):
             std = F.softplus(std) + 0.1
             return {'mean': mean, 'std': std}
 
+    def suff_stats_ensemble(self, x):
+        '''Plan2Explore'''
+        stats = []
+        for i in range(self.ensemble):
+            prior_embed = self.act_fn(self.fc_embed_priors[i](x))
+            prior = self.fc_state_priors[i](prior_embed)
+            stat = self.suff_stats_layer(prior) # -> mean, std
+            stats.append(stat)
+        stats = {k: torch.stack([stat[k] for stat in stats]) for k in stats[0].keys()}
+        return stats # (ensemble, B, ...)
+
     def observe_rollout(self, obs_embed, actions, nonterms, prev_state, horizon):
+
+        #---------------- future attention ----------------
+        # obs_embed (T, n, e)
+        # attn_mask
+        # 0 0 0 0
+        # 1 0 0 0
+        # 1 1 0 0
+        # 1 1 1 0
+        if self.future:
+            attn_mask = torch.tril(torch.ones((obs_embed.shape[0], obs_embed.shape[0]), device=self.device), diagonal=-1).bool()
+            obs_embed, attn_output_weights = self.attention(obs_embed, obs_embed, obs_embed, attn_mask=attn_mask)
+        #--------------------------------------------------
 
         priors = []
         posteriors = []
+        if not self.reverse:
+            for t in range(horizon):
+                prev_action = actions[t] * nonterms[t]
+                prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], nonterms[t])
+                priors.append(prior_state)
+                posteriors.append(posterior_state)
+                prev_state = posterior_state
 
-        for t in range(horizon):
-            prev_action = actions[t] * nonterms[t]
-            prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], nonterms[t])
-            priors.append(prior_state)
+        else:
+            #----------------- reverse posteriors ----------------
+            # timestep: 0,  1,  2,  3,  4,  5,  4,  3,  2,  1,  0
+            # obs_embed:e0, e1, e2, e3, e4, e5, e4, e3, e2, e1, e0
+            # prior:    p0, p1, p2, p3, p4, p5,
+            # posterior:                    q5, q4, q3, q2, q1, q0
+            # obs_recon:                    e5, e4, e3, e2, e1, e0
+            #-----------------------------------------------------
+
+            for t in range(horizon):
+                prev_action = actions[t] * nonterms[t]
+                prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], nonterms[t])
+                priors.append(prior_state)
+                prev_state = posterior_state
             posteriors.append(posterior_state)
-            prev_state = posterior_state
+
+            for t in reversed(range(horizon-1)):
+                prev_action = actions[t] * nonterms[t]
+                prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], nonterms[t], reverse=True)
+                posteriors.append(posterior_state)
+                prev_state = posterior_state
+            posteriors = list(reversed(posteriors))
 
         priors = self.stack_states(priors, dim=0)
         posteriors = self.stack_states(posteriors, dim=0)
 
         return priors, posteriors
 
-    def get_kl_loss(self, prior, posterior, kl_alpha, free_nats, kl_balancing):
+    def imagine_rollout(self, actions, nonterms, prev_state, horizon):
+        priors = []
+
+        for t in range(horizon):
+            prev_action = actions[t] * nonterms[t]
+            prior_state = self.imagine_step(prev_state, prev_action, nonterms[t]) # (B, ...)
+            priors.append(prior_state)
+            prev_state = prior_state
+
+        priors = self.stack_states(priors, dim=0)
+
+        return priors
+
+    def get_div_loss(self, prior, posterior, div_alpha, free_nats, div_balancing, div_type='kl'):
+        divergence = {'kl': distributions.kl.kl_divergence, 
+                      'kl_div': kl_div_sample,
+                      'chi2': chi2_divergence}[div_type]
         prior_dist = self.get_dist(prior)
         post_dist = self.get_dist(posterior)
-        if kl_balancing:
-            post_no_grad = self.detach_state(posterior)
-            prior_no_grad = self.detach_state(prior)
-            
-            # kl_balancing
-            kl_loss = kl_alpha * (torch.mean(distributions.kl.kl_divergence(
-                               self.get_dist(post_no_grad), prior_dist)))
-            kl_loss += (1-kl_alpha) * (torch.mean(distributions.kl.kl_divergence(
-                               post_dist, self.get_dist(prior_no_grad))))
-        else:
-            kl_loss = torch.mean(distributions.kl.kl_divergence(post_dist, prior_dist))
-            kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), free_nats))
-        return kl_loss
+        if div_type == 'chi2':
+            if not self.discrete:
+                if div_balancing:
+                    post_no_grad = self.detach_state(posterior)
+                    prior_no_grad = self.detach_state(prior)
 
+                    # div_balancing
+                    div_loss = div_alpha * (torch.mean(divergence(
+                                    post_no_grad['mean'], post_no_grad['std'], prior['mean'], prior['std'])))
+                    div_loss += (1-div_alpha) * (torch.mean(divergence(
+                                    posterior['mean'], posterior['std'], prior_no_grad['mean'], prior_no_grad['std'])))
+                else:
+                    div_loss = torch.mean(divergence(posterior['mean'], posterior['std'], prior['mean'], prior['std']))
+                    div_loss = torch.max(div_loss, div_loss.new_full(div_loss.size(), free_nats))
+        elif div_type == 'kl':
+            if div_balancing:
+                post_no_grad = self.detach_state(posterior)
+                prior_no_grad = self.detach_state(prior)
+                
+                # div_balancing
+                div_loss = div_alpha * (torch.mean(divergence(
+                                self.get_dist(post_no_grad), prior_dist)))
+                div_loss += (1-div_alpha) * (torch.mean(divergence(
+                                post_dist, self.get_dist(prior_no_grad))))
+            else:
+                div_loss = torch.mean(divergence(post_dist, prior_dist))
+                div_loss = torch.max(div_loss, div_loss.new_full(div_loss.size(), free_nats))
+        return div_loss
 
-    def stack_states(self, states, dim=0):
+    def stack_states(self, states, dim=0): # (T, B, ...)
         if self.discrete:
             return dict(
                 logit  = torch.stack([state['logit'] for state in states], dim=dim),
                 stoch = torch.stack([state['stoch'] for state in states], dim=dim),
-                deter = torch.stack([state['deter'] for state in states], dim=dim))
+                deter = torch.stack([state['deter'] for state in states], dim=dim),
+                log_prob = torch.stack([state['log_prob'] for state in states], dim=dim))
         else:
             return dict(
                 mean = torch.stack([state['mean'] for state in states], dim=dim),
                 std  = torch.stack([state['std'] for state in states], dim=dim),
                 stoch = torch.stack([state['stoch'] for state in states], dim=dim),
-                deter = torch.stack([state['deter'] for state in states], dim=dim))
+                deter = torch.stack([state['deter'] for state in states], dim=dim),
+                log_prob = torch.stack([state['log_prob'] for state in states], dim=dim))
 
     def detach_state(self, state):
         if self.discrete:
             return dict(
                 logit = state['logit'].detach(),
                 stoch = state['stoch'].detach(),
-                deter = state['deter'].detach())
+                deter = state['deter'].detach(),
+                log_prob = state['log_prob'].detach())
         else:
             return dict(
                 mean = state['mean'].detach(),
                 std  = state['std'].detach(),
                 stoch = state['stoch'].detach(),
-                deter = state['deter'].detach())
+                deter = state['deter'].detach(),
+                log_prob = state['log_prob'].detach())
 
     def seq_to_batch(self, state):
         if self.discrete:
             return dict(
-                logit = torch.reshape(state['logit'], (state['logit'].shape[0]* state['logit'].shape[1], *state['logit'].shape[2:])),
-                stoch = torch.reshape(state['stoch'], (state['stoch'].shape[0]* state['stoch'].shape[1], *state['stoch'].shape[2:])),
-                deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])))
+                logit = torch.reshape(state['logit'], (state['logit'].shape[0] * state['logit'].shape[1], *state['logit'].shape[2:])),
+                stoch = torch.reshape(state['stoch'], (state['stoch'].shape[0] * state['stoch'].shape[1], *state['stoch'].shape[2:])),
+                deter = torch.reshape(state['deter'], (state['deter'].shape[0] * state['deter'].shape[1], *state['deter'].shape[2:])),
+                log_prob = torch.reshape(state['log_prob'], (state['log_prob'].shape[0] * state['log_prob'].shape[1], 1)))
         else:
             return dict(
-                mean = torch.reshape(state['mean'], (state['mean'].shape[0]* state['mean'].shape[1], *state['mean'].shape[2:])),
-                std = torch.reshape(state['std'], (state['std'].shape[0]* state['std'].shape[1], *state['std'].shape[2:])),
-                stoch = torch.reshape(state['stoch'], (state['stoch'].shape[0]* state['stoch'].shape[1], *state['stoch'].shape[2:])),
-                deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])))
+                mean = torch.reshape(state['mean'], (state['mean'].shape[0] * state['mean'].shape[1], *state['mean'].shape[2:])),
+                std = torch.reshape(state['std'], (state['std'].shape[0] * state['std'].shape[1], *state['std'].shape[2:])),
+                stoch = torch.reshape(state['stoch'], (state['stoch'].shape[0] * state['stoch'].shape[1], *state['stoch'].shape[2:])),
+                deter = torch.reshape(state['deter'], (state['deter'].shape[0] * state['deter'].shape[1], *state['deter'].shape[2:])),
+                log_prob = torch.reshape(state['log_prob'], (state['log_prob'].shape[0] * state['log_prob'].shape[1], 1)))
 
 class ConvEncoder(nn.Module):
 
@@ -277,9 +442,9 @@ class MaskConvDecoder(nn.Module):
         out = self.dense(features)
         out = torch.reshape(out, [-1, 32*self.depth, 1, 1])
         out = self.convtranspose(out)
-        mean, mask = torch.split(out, [self.output_shape[0]//2]*2, dim=1) # origin: (out, [3,3], dim=1), 默认channel=3
-        mean = torch.reshape(mean, (*out_batch_shape, self.output_shape[0]//2, *self.output_shape[1:])) # (T, B, 3, size, size)
-        mask = torch.reshape(mask, (*out_batch_shape, self.output_shape[0]//2, *self.output_shape[1:])) # (T, B, 3, size, size)
+        mean, mask = torch.split(out, [3, 3], dim=1)
+        mean = torch.reshape(mean, (*out_batch_shape, 3, *self.output_shape[1:])) # (T, B, 3, size, size)
+        mask = torch.reshape(mask, (*out_batch_shape, 3, *self.output_shape[1:])) # (T, B, 3, size, size)
         
         out_dist = distributions.independent.Independent(
             distributions.Normal(mean, 1), len(self.output_shape))
@@ -293,7 +458,7 @@ class EnsembleMaskConvDecoder(nn.Module):
         self.decoder1 = decoder1
         self.decoder2 = decoder2
         self.output_shape = decoder1.output_shape # (3, size, size)
-        self.mask_conv = nn.Sequential(nn.Conv2d(self.output_shape[0], 1, 1, stride=1), # origin: nn.Conv2d(6, 1, 1, stride=1)
+        self.mask_conv = nn.Sequential(nn.Conv2d(6, 1, 1, stride=1),
                                        nn.Sigmoid())
 
     def forward(self, features1, features2):
@@ -302,7 +467,7 @@ class EnsembleMaskConvDecoder(nn.Module):
         mean1 = pred1.mean
         mean2 = pred2.mean
         mask_feat = torch.cat([mask1, mask2], dim=2) # (T, B, 6, size, size)
-        mask_feat = torch.reshape(mask_feat, [-1, *self.output_shape]) # origin: [-1, 6, *self.output_shape[1:]
+        mask_feat = torch.reshape(mask_feat, [-1, 6, *self.output_shape[1:]])
         mask = self.mask_conv(mask_feat) # (T*B, 1, size, size)
         mask = torch.reshape(mask, [*mask1.shape[:2], *mask.shape[1:]]) # # (T, B, 1, size, size)
         mean = mean1 * mask + mean2 * (1 - mask)
@@ -310,15 +475,16 @@ class EnsembleMaskConvDecoder(nn.Module):
             distributions.Normal(mean, 1), len(self.output_shape))
         return out_dist, pred1, pred2, mask
     
-
 # used for reward and value models
 class DenseDecoder(nn.Module):
 
-    def __init__(self, stoch_size, deter_size, output_shape, n_layers, units, activation, dist, discrete = False):
+    def __init__(self, stoch_size, deter_size, output_shape, n_layers, units, activation, dist, discrete = False, action_size=None):
 
         super().__init__()
 
         self.input_size = stoch_size + deter_size if not discrete else stoch_size * discrete + deter_size
+        if action_size is not None:
+            self.input_size += action_size
         self.output_shape = output_shape
         self.n_layers = n_layers
         self.units = units
@@ -345,8 +511,8 @@ class DenseDecoder(nn.Module):
             return distributions.independent.Independent(
                 distributions.Normal(out, 1), len(self.output_shape))
         if self.dist == 'binary':
-            return distributions.independent.Independent(
-                distributions.Bernoulli(logits =out), len(self.output_shape))
+            return Bernoulli(distributions.independent.Independent(
+                distributions.Bernoulli(logits=out), len(self.output_shape)))
         if self.dist == 'none':
             return out
 
@@ -396,7 +562,7 @@ class ActionDecoder(nn.Module):
             dist = TruncNormalDist(torch.tanh(mean), std, -1, 1)
             dist = Independent(dist, 1)
         elif self.dist == 'tanh_normal':
-            raw_init_std = np.log(np.exp(self._init_std)-1)
+            raw_init_std = np.log(np.exp(self._init_std) - 1)
             action_mean = self._mean_scale * torch.tanh(mean / self._mean_scale)
             action_std = F.softplus(std + raw_init_std) + self._min_std
 
@@ -426,9 +592,11 @@ class TanhBijector(distributions.Transform):
         self.codomain = constraints.interval(-1.0, 1.0)
 
     @property
-    def sign(self): return 1.
+    def sign(self): 
+        return 1.
 
-    def _call(self, x): return torch.tanh(x)
+    def _call(self, x): 
+        return torch.tanh(x)
 
     def atanh(self, x):
         return 0.5 * torch.log((1 + x) / (1 - x))
@@ -478,6 +646,9 @@ class SampleDist:
 
     def sample(self):
         return self._dist.sample()
+    
+    def rsample(self):
+        return self._dist.rsample()
 
 class OneHotDist(distributions.OneHotCategorical):
 
@@ -510,6 +681,10 @@ class OneHotDist(distributions.OneHotCategorical):
         sample += (probs - probs.detach())  # .type(self._sample_dtype)
         return sample
 
+    def rsample(self, sample_shape=(), seed=None):  # note doenst have rsample
+        return self.sample(sample_shape, seed=seed)
+
+
     # custom log_prob more stable
     def log_prob(self, value):
         if self._validate_args:
@@ -523,16 +698,25 @@ class OneHotDist(distributions.OneHotCategorical):
 
         return torch.reshape(ret, logits.shape[:-1])
 
-import math
-from numbers import Number
-from torch.distributions import Distribution, constraints
-from torch.distributions.utils import broadcast_all
+class Attention(nn.Module):
+    def __init__(self, feat_size):
+        super(Attention, self).__init__()
+        self.linear_q = nn.Linear(feat_size, feat_size*2)
+        self.linear_k = nn.Linear(feat_size, feat_size*2)
+        self.linear_v = nn.Linear(feat_size, feat_size*2)
+        self.linear_o = nn.Linear(feat_size*2, feat_size)
+        self._norm_fact = 1 / sqrt(feat_size*2)
 
-CONST_SQRT_2 = math.sqrt(2)
-CONST_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
-CONST_INV_SQRT_2 = 1 / math.sqrt(2)
-CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
-CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
+    def forward(self, query, value):
+        q = self.linear_q(query)  # batch, dim*2
+        k = self.linear_k(value)  # batch, n, dim*2
+        v = self.linear_v(value)  # batch, n, dim*2
+        q = q.unsqueeze(1)  # batch, 1, dim*2
+        dist = torch.bmm(q, k.transpose(1, 2)) * self._norm_fact  # batch, 1, n
+        dist = torch.softmax(dist, dim=-1)  # batch, 1, n
+        att = torch.bmm(dist, v) # batch, 1, dim*2
+        att = self.linear_o(att)  # batch, 1, dim
+        return att.squeeze(1) #+ query
 
 class TruncatedStandardNormal(Distribution):
     """
@@ -627,7 +811,6 @@ class TruncatedStandardNormal(Distribution):
         p = torch.empty(shape, device=self.a.device).uniform_(self._dtype_min_gt_0, self._dtype_max_lt_1)
         return self.icdf(p)
 
-
 class TruncatedNormal(TruncatedStandardNormal):
     """
     Truncated Normal distribution
@@ -675,9 +858,6 @@ class TruncNormalDist(TruncatedNormal):
     def sample(self, *args, **kwargs):
         event = super().rsample(*args, **kwargs)
         if self._clip:
-            # clipped = tf.clip_by_value(
-            #     event, self.low + self._clip, self.high - self._clip)
-            # event = event - tf.stop_gradient(event) + tf.stop_gradient(clipped)
 
             clipped = torch.clamp(event, self.low + self._clip, self.high - self._clip)
             event = event - event.detach() + clipped.detach()
@@ -689,3 +869,33 @@ class Independent(distributions.Independent):
     @property
     def mode(self):
         return self.base_dist.mode
+    
+    def rsample(self):
+        return self.base_dist.rsample()
+    
+class Bernoulli:
+
+    def __init__(self, dist=None):
+        super().__init__()
+        self._dist = dist
+        self.mean = dist.mean
+
+    def __getattr__(self, name):
+        return getattr(self._dist, name)
+
+    def entropy(self):
+        return self._dist.entropy()
+
+    def mode(self):
+        _mode = torch.round(self._dist.mean)
+        return _mode.detach() +self._dist.mean - self._dist.mean.detach()
+
+    def sample(self, sample_shape=()):
+        return self._dist.rsample(sample_shape)
+
+    def log_prob(self, x):
+        _logits = self._dist.base_dist.logits
+        log_probs0 = -F.softplus(_logits)
+        log_probs1 = -F.softplus(-_logits)
+
+        return log_probs0 * (1-x) + log_probs1 * x
