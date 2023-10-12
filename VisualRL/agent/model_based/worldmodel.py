@@ -7,7 +7,7 @@ from torchvision import transforms
 from PIL import Image
 from utils.replay_buffer import ReplayBuffer
 from model.models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
-from utils.util import *
+from utils import *
 
 
 class WorldModel: 
@@ -134,7 +134,7 @@ class WorldModel:
         div_loss = self.rssm.get_div_loss(prior, self.posterior, self.kl_alpha, self.free_nats, self.kl_balance)#, div_type=self.args.div_type)
 
         obs_loss = -torch.mean(obs_dist.log_prob(obs)) 
-        rew_loss = -torch.mean(rew_dist.log_prob(rews))
+        rew_loss = F.mse_loss(rew_dist, rews, reduction='none').mean() if self.reward_dist == 'none' else -torch.mean(rew_dist.log_prob(rews))
         model_loss = self.kl_loss_coeff * div_loss + obs_loss + rew_loss
         if self.use_disc_model:
             disc_loss = -torch.mean(disc_dist.log_prob(nonterms))

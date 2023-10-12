@@ -36,9 +36,9 @@ class RSSM(nn.Module):
 
         self.fc_state_action = nn.Linear(self.stoch_size + self.action_size, self.deter_size) if not self.discrete \
                             else nn.Linear(self.stoch_size*self.discrete + self.action_size, self.deter_size)
-        self.fc_embed_prior = nn.ModuleList([nn.Linear(self.deter_size, self.hidden_size)])
-        self.fc_state_prior = nn.ModuleList([nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
-                            else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)])
+        self.fc_embed_prior = nn.Linear(self.deter_size, self.hidden_size)
+        self.fc_state_prior  = nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
+                            else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)
         self.fc_embed_posterior = nn.Linear(self.embedding_size + self.deter_size, self.hidden_size)
         self.fc_state_posterior = nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
                             else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)
@@ -89,9 +89,9 @@ class RSSM(nn.Module):
             prev_stoch = prev_stoch.reshape(*prev_stoch.shape[:-2], self.stoch_size*self.discrete)
         state_action = self.act_fn(self.fc_state_action(torch.cat([prev_stoch*nonterm, prev_action], dim=-1))) # za_{t-1}=[z_{t-1}, a_{t-1}]
         deter = self.rnn(state_action, prev_state['deter']*nonterm) # (B, h) h_t = f_{phi}(h_{t-1}, za_{t-1})
-        stats = self.suff_stats_ensemble(deter) # \hat{z}_t ~ p_{phi}(\hat{z}_t | h_t)
-        index = np.random.choice(np.arange(1))
-        stats = {k: v[index] for k, v in stats.items()} # (B, ...)
+        prior_embed = self.act_fn(self.fc_embed_prior(deter))
+        prior = self.fc_state_prior(prior_embed)
+        stats = self.suff_stats_layer(prior)
         stoch = self.get_dist(stats).rsample()
         prior = {'stoch': stoch, 'deter': deter, **stats}
         return prior
@@ -109,16 +109,16 @@ class RSSM(nn.Module):
             std = F.softplus(std) + 0.1
             return {'mean': mean, 'std': std}
     
-    def suff_stats_ensemble(self, x):
-        '''Plan2Explore'''
-        stats = []
-        for i in range(1):
-            prior_embed = self.act_fn(self.fc_embed_prior[i](x))
-            prior = self.fc_state_prior[i](prior_embed)
-            stat = self.suff_stats_layer(prior) # -> mean, std
-            stats.append(stat)
-        stats = {k: torch.stack([stat[k] for stat in stats]) for k in stats[0].keys()}
-        return stats # (ensemble, B, ...)
+    # def suff_stats_ensemble(self, x):
+    #     '''Plan2Explore'''
+    #     stats = []
+    #     for i in range(1):
+    #         prior_embed = self.act_fn(self.fc_embed_prior[i](x))
+    #         prior = self.fc_state_prior[i](prior_embed)
+    #         stat = self.suff_stats_layer(prior) # -> mean, std
+    #         stats.append(stat)
+    #     stats = {k: torch.stack([stat[k] for stat in stats]) for k in stats[0].keys()}
+    #     return stats # (ensemble, B, ...)
 
     def observe_rollout(self, obs_embed, actions, nonterms, prev_state, horizon):
         

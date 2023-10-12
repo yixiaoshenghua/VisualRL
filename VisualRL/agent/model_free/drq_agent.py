@@ -25,7 +25,7 @@ class AgentDrQ(AgentSACBase):
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
-        pre_transform_image_size, image_size, framestack, 
+        pre_transform_image_size, image_size, frame_stack, 
         buffer_size, batch_size, 
         discount, 
         action_repeat, max_videos_to_save, 
@@ -38,7 +38,7 @@ class AgentDrQ(AgentSACBase):
             encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
             actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
             critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
-            pre_transform_image_size, image_size, framestack, 
+            pre_transform_image_size, image_size, frame_stack, 
             buffer_size, batch_size, 
             discount, 
             action_repeat, max_videos_to_save, 
@@ -63,7 +63,7 @@ class AgentDrQ(AgentSACBase):
         self.data_buffer = make_replay_buffer(
             action_shape, device, 
             agent, 
-            pre_transform_image_size, image_size, framestack, 
+            pre_transform_image_size, image_size, frame_stack, 
             buffer_size, batch_size, image_pad=image_pad
         )
 

@@ -22,7 +22,7 @@ class AgentBase:
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
-        pre_transform_image_size, image_size, framestack, 
+        pre_transform_image_size, image_size, frame_stack, 
         buffer_size, batch_size, 
         discount, action_repeat, max_videos_to_save
         ):
@@ -73,7 +73,7 @@ class AgentBase:
         self.data_buffer = make_replay_buffer(
             action_shape, device, 
             agent, 
-            pre_transform_image_size, image_size, framestack, 
+            pre_transform_image_size, image_size, frame_stack, 
             buffer_size, batch_size
         )
 
@@ -246,7 +246,13 @@ class AgentBase:
         self.step = step
 
         for i in range(collect_steps):
-            for _ in range(num_updates):
+            if not i and isinstance(num_updates, tuple):
+                updates = num_updates[0]
+                num_updates = num_updates[1]
+            else:
+                updates = num_updates
+            
+            for _ in range(updates):
                 loss_dict = self.update(self.step)
             
             if self.step % log_interval == 0:
@@ -257,7 +263,8 @@ class AgentBase:
             with torch.no_grad():
                 action = self.sample_action(obs)
             next_obs, rew, done, _ = env.step(action)
-            self.data_buffer.add(obs, action, rew, next_obs, done)
+            done_bool = 0 if i==collect_steps-1 else float(done)
+            self.data_buffer.add(obs, action, rew, next_obs, done_bool)
 
             episode_rewards[-1] += rew
 
@@ -293,6 +300,29 @@ class AgentBase:
         
         self.train(True)
         return episode_rew, np.array(video_images[:self.max_videos_to_save])#, pred_videos # (T, H, W, C)
+    
+    def collect_random_episodes(self, env, seed_steps):
+
+        obs = env.reset()
+        done = False
+        seed_episode_rews = [0.0]
+
+        for i in range(seed_steps):
+            action = env.action_space.sample()
+            next_obs, rew, done, _ = env.step(action)
+            done_bool = 0 if i==seed_steps-1 else float(done)
+            
+            self.data_buffer.add(obs, action, rew, next_obs, done_bool)
+            seed_episode_rews[-1] += rew
+            if done:
+                obs = env.reset()
+                if i!= seed_steps-1:
+                    seed_episode_rews.append(0.0)
+                done=False  
+            else:
+                obs = next_obs
+
+        return np.array(seed_episode_rews)
 
     def save(self, model_dir, step):
         torch.save(
@@ -319,7 +349,7 @@ class AgentSACBase(AgentBase):
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
-        pre_transform_image_size, image_size, framestack, 
+        pre_transform_image_size, image_size, frame_stack, 
         buffer_size, batch_size, 
         discount, action_repeat, max_videos_to_save, 
         init_temperature, alpha_lr, alpha_beta
@@ -330,7 +360,7 @@ class AgentSACBase(AgentBase):
             encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
             actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
             critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
-            pre_transform_image_size, image_size, framestack, 
+            pre_transform_image_size, image_size, frame_stack, 
             buffer_size, batch_size, 
             discount, action_repeat, max_videos_to_save
         )

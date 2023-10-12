@@ -24,16 +24,17 @@ from utils.video import VideoRecorder
 import envs
 
 from agent.model_free.sacae_agent import AgentSACAE
-from agent.model_free.flare_agent import AgentFLARE
+# from agent.model_free.flare_agent import AgentFLARE
 from agent.model_free.curl_agent import AgentCURL
-from agent.model_free.rad_agent import AgentRad
-from agent.model_free.baseline import BaselineAgent
-from agent.model_free.deepmdp import DeepMDPAgent
+# from agent.model_free.rad_agent import AgentRad
+# from agent.model_free.baseline import BaselineAgent
+# from agent.model_free.deepmdp import DeepMDPAgent
 from agent.model_free.dbc_agent import AgentDBC
 from agent.model_free.drq_agent import AgentDrQ
-from agent.model_free.dribo_agent import AgentDRIBO
+# from agent.model_free.dribo_agent import AgentDRIBO
 from agent.model_based.dreamer_agent import AgentDreamer
-from agent.model_based.tia_agent import AgentTIA
+from agent.model_based.planet_agent import AgentPlaNet
+# from agent.model_based.tia_agent import AgentTIA
 
 import numpy as np
 
@@ -45,18 +46,19 @@ os.environ['MUJOCO_GL'] = 'egl'
 # os.environ['MUJOCO_GL'] = 'osmesa'
 
 AGENTS = {
-    "baseline": BaselineAgent,
+    # "baseline": BaselineAgent,
     "curl": AgentCURL,
     "dbc": AgentDBC,
-    "deepmdp": DeepMDPAgent,
+    # "deepmdp": DeepMDPAgent,
     "dreamerv1": AgentDreamer,
     "dreamerv2": AgentDreamer,
-    "dribo": AgentDRIBO,
+    "planet": AgentPlaNet, 
+    # "dribo": AgentDRIBO,
     "drq": AgentDrQ,
-    "flare": AgentFLARE,
-    "rad": AgentRad,
+    # "flare": AgentFLARE,
+    # "rad": AgentRad,
     "sac_ae": AgentSACAE,
-    "tia": AgentTIA
+    # "tia": AgentTIA
 }
 
 def get_args():
@@ -78,6 +80,7 @@ def get_args():
         
     args.agent = agent_name
     args.pre_transform_image_size = agent_config['pre_transform_image_size']
+    args.image_size = agent_config['image_size']
     args.action_repeat = agent_config['action_repeat']
     args.frame_stack = agent_config['frame_stack']
     
@@ -175,7 +178,7 @@ def main():
     train_env = envs.make_env(args)
     test_env = envs.make_env(args)
     # train_env.seed(args.seed)
-    obs_shape = train_env.observation_space['image'].shape
+    obs_shape = (3*args.frame_stack, args.image_size, args.image_size) if args.agent == 'curl' else train_env.observation_space['image'].shape
     action_shape = train_env.action_space.shape
     action_range = [float(train_env.action_space.low.min()), float(train_env.action_space.high.max())]
 
@@ -231,7 +234,7 @@ def main():
             L.log_scalars(agent_update_dict, step)
         else:
             if step == args.init_steps and args.agent == 'sac_ae':
-                num_updates = args.init_steps
+                num_updates = (args.init_steps, args.update_steps)
             else:
                 num_updates = args.update_steps
         

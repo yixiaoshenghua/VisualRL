@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.distributions as distributions
+import tqdm
 from torchvision import transforms
 from PIL import Image
 from utils.replay_buffer import make_replay_buffer
@@ -364,7 +365,7 @@ class AgentDreamer:
         video_images = [[] for _ in range(eval_episodes)]
         self.train(False)
 
-        for i in range(eval_episodes):
+        for i in tqdm.tqdm(range(eval_episodes), desc='evaluating'):
             obs = env.reset()
             done = False
             rssm_state = self.world_model.reset()

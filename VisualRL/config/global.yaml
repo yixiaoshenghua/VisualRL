@@ -1,7 +1,7 @@
 # Global configuration setting for VisualRL
 
 # ------------------------General parameters------------------------
-exp_name: "Reproduce-DreamerV1-WalkerWalk"
+exp_name: "Reproduce-SACAE-WalkerWalk"
 
 # set as -1 for random seed
 seed: 0
@@ -10,10 +10,10 @@ seed: 0
 gpu: 0
 
 # ------------------------------Agent------------------------------
-agent: "dreamerv1"
+agent: "sac_ae"
 
 #TODO: notice this!
-model_based: True
+model_based: False
 
 # ---------------------------Environment---------------------------
 env: "walker-walk"
@@ -24,18 +24,19 @@ time_limit: 1000
 max_episode_length: 1000
 
 # -----------------------------Training-----------------------------
-# 1000 for mf methods
-init_steps: 5000
+# 1000 for mf methods, 5000 for mb methods
+init_steps: 1000
 
 total_steps: 1000000
 
-# 1 for mf methods
-update_steps: 100
+# 1 for mf methods, 100 for mb methods
+update_steps: 1
 
 collect_steps: 1000
 
 # ------------------------Saving and logging------------------------
-eval_freq: 5000
+# We recommend evaluating the agent every 25k steps for PlaNet, and every 10k steps for other agents.
+eval_freq: 10000
 eval_episodes: 10
 log_interval: 100
 save_tb: True

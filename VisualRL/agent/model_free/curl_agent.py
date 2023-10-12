@@ -75,7 +75,7 @@ class AgentCURL(AgentSACBase):
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
-        pre_transform_image_size, image_size, framestack, 
+        pre_transform_image_size, image_size, frame_stack, 
         buffer_size, batch_size, 
         discount, 
         action_repeat, max_videos_to_save, 
@@ -92,20 +92,19 @@ class AgentCURL(AgentSACBase):
             encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
             actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
             critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
-            pre_transform_image_size, image_size, framestack, 
+            pre_transform_image_size, image_size, frame_stack, 
             buffer_size, batch_size, 
             discount, 
             action_repeat, max_videos_to_save, 
             init_temperature, alpha_lr, alpha_beta
         )
         
-        self.action_repeat = action_repeat
         self.max_videos_to_save = max_videos_to_save
         self.encoder_lr = encoder_lr
         self.cpc_update_freq = cpc_update_freq
         self.detach_encoder = detach_encoder
         self.curl_latent_dim = curl_latent_dim
-        self.image_size = obs_shape[-1]
+        self.image_size = self.obs_shape[-1]
         self.data_augs = data_augs
 
         self.augs_funcs = {}
@@ -129,7 +128,7 @@ class AgentCURL(AgentSACBase):
 
         if self.encoder_type == 'pixel':
             # create CURL encoder (the 128 batch size is probably unnecessary)
-            self.CURL = CURL(obs_shape, 
+            self.CURL = CURL(self.obs_shape, 
                              self.encoder_feature_dim,
                              self.curl_latent_dim, 
                              self.critic,
@@ -159,6 +158,9 @@ class AgentCURL(AgentSACBase):
     
     def select_action(self, obs):
         obs = obs['image']
+        if obs.shape[-1] != self.image_size:
+            obs = util.center_crop_image(obs, self.image_size)
+
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
