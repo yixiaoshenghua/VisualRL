@@ -11,96 +11,84 @@ from utils.replay_buffer import make_replay_buffer
 from model.actor import Actor
 from model.critic import Critic
 from utils.pytorch_util import weight_init
-from VisualRL.utils.replay_buffer import ReplayBuffer
 
 LOG_FREQ = 10000
 
 class AgentBase:
     def __init__(
-            self,
-            obs_shape: int, 
-            action_shape: int, 
-            device: Union[torch.device, str],
-            agent_name: str, 
-            hidden_dim: int,
-            discount: float,
-            actor_lr: float,
-            actor_beta: float,
-            actor_log_std_min: float,
-            actor_log_std_max: float,
-            actor_update_freq: float,
-            critic_lr: float,
-            critic_beta: float,
-            critic_tau: float,
-            critic_target_update_freq: int,
-            encoder_type: float,
-            encoder_feature_dim: float,
-            encoder_tau: float,
-            num_layers: int,
-            num_filters: int,
-            builtin_encoder: bool,
-            frame_stack: int,
-            image_size: int,
-            buffer_size: int,
-            batch_size: int
+        self, 
+        obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
+        agent, 
+        encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+        actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+        critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+        pre_transform_image_size, image_size, framestack, 
+        buffer_size, batch_size, 
+        discount, action_repeat, max_videos_to_save
         ):
+        # ------------global config------------
         self.obs_shape = obs_shape
         self.action_shape = action_shape
+        self.action_range = action_range
         self.device = device
-        self.agent_name = agent_name
-        self.hidden_dim = hidden_dim
-        self.discount = discount
-        self.actor_lr = actor_lr
-        self.actor_beta = actor_beta
-        self.actor_log_std_min = actor_log_std_min
-        self.actor_log_std_max = actor_log_std_max
-        self.actor_update_freq = actor_update_freq
-        self.critic_lr = critic_lr
-        self.critic_beta = critic_beta
-        self.critic_tau = critic_tau
-        self.critic_target_update_freq = critic_target_update_freq
+        # ------------agent config------------
+        self.agent = agent
+        # encoder
         self.encoder_type = encoder_type
         self.encoder_feature_dim = encoder_feature_dim
         self.encoder_tau = encoder_tau
         self.num_layers = num_layers
         self.num_filters = num_filters
+        self.hidden_dim = hidden_dim
         self.builtin_encoder = builtin_encoder
-        self.frame_stack = frame_stack
-        self.image_size = image_size
-        self.buffer_size = buffer_size
-        self.batch_size = batch_size
+        # actor
+        self.actor_lr = actor_lr
+        self.actor_beta = actor_beta
+        self.actor_log_std_min = actor_log_std_min
+        self.actor_log_std_max = actor_log_std_max
+        self.actor_update_freq = actor_update_freq
+        # critic
+        self.critic_lr = critic_lr
+        self.critic_beta = critic_beta
+        self.critic_tau = critic_tau
+        self.critic_target_update_freq = critic_target_update_freq
+        # constants
+        self.discount = discount
+        self.action_repeat = action_repeat
+        self.max_videos_to_save = max_videos_to_save
 
         # CURL doesn't add the tanh nonlinearity to the output of the fc layer
-        self.output_logits = (agent_name == 'curl')
+        self.output_logits = True if self.agent == 'curl' else False
 
         self.critic = self._build_critic()
         self.critic_target = self._build_critic_target()
         self.actor = self._build_actor()
         # build optimizer
         self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), 
-            lr=self.actor_lr, 
-            betas=(self.actor_beta, 0.999)
+            self.actor.parameters(), lr=self.actor_lr, betas=(self.actor_beta, 0.999)
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), 
-            lr=self.critic_lr, 
-            betas=(self.critic_beta, 0.999)
+            self.critic.parameters(), lr=self.critic_lr, betas=(self.critic_beta, 0.999)
         )
-        self.data_buffer = self._make_replay_buffer()
+        self.data_buffer = make_replay_buffer(
+            action_shape, device, 
+            agent, 
+            pre_transform_image_size, image_size, framestack, 
+            buffer_size, batch_size
+        )
 
     def _build_actor(self):
         actor = Actor(
-            self.obs_shape,
-            self.action_shape,
-            self.agent_name,
-            self.hidden_dim,
-            self.encoder_type,
-            self.encoder_feature_dim,
-            self.actor_log_std_min,
+            self.agent, 
+            self.obs_shape, 
+            self.action_shape, 
+            self.hidden_dim, 
+            self.encoder_type, 
+            self.encoder_feature_dim, 
+            self.actor_log_std_min, 
             self.actor_log_std_max,
-            self.num_layers,
-            self.num_filters,
+            self.num_layers, 
+            self.num_filters, 
             self.output_logits,
             self.builtin_encoder
         ).to(self.device)
@@ -111,45 +99,34 @@ class AgentBase:
 
     def _build_critic(self):
         critic = Critic(
-            self.obs_shape,
-            self.action_shape,
-            self.agent_name,
-            self.hidden_dim,
+            self.agent, 
+            self.obs_shape, 
+            self.action_shape, 
+            self.hidden_dim, 
             self.encoder_type,
-            self.encoder_feature_dim,
-            self.num_layers,
-            self.num_filters,
+            self.encoder_feature_dim, 
+            self.num_layers, 
+            self.num_filters, 
             self.output_logits,
             self.builtin_encoder
         ).to(self.device)
         return critic
 
-
     def _build_critic_target(self):
         critic_target = Critic(
-            self.obs_shape,
-            self.action_shape,
-            self.agent_name,
-            self.hidden_dim,
+            self.agent, 
+            self.obs_shape, 
+            self.action_shape, 
+            self.hidden_dim, 
             self.encoder_type,
-            self.encoder_feature_dim,
-            self.num_layers,
-            self.num_filters,
+            self.encoder_feature_dim, 
+            self.num_layers, 
+            self.num_filters, 
             self.output_logits,
             self.builtin_encoder
         ).to(self.device)
         critic_target.load_state_dict(self.critic.state_dict())
         return critic_target
-    
-    def _make_replay_buffer(self):
-        return ReplayBuffer(
-            (3 * self.frame_stack, self.image_size, self.image_size),
-            self.action_shape,
-            self.buffer_size,
-            self.buffer_size,
-            self.batch_size,
-            self.device
-        )
 
     def train(self, training=True):
         self.training = training
@@ -261,6 +238,61 @@ class AgentBase:
             )
         
         return loss_dict
+    
+    def act_and_collect_data(self, env, collect_steps, step, logger, log_interval=100, num_updates=1):
+        obs = env.reset()
+        done = False
+        episode_rewards = [0.0]
+        self.step = step
+
+        for i in range(collect_steps):
+            for _ in range(num_updates):
+                loss_dict = self.update(self.step)
+            
+            if self.step % log_interval == 0:
+                print('------------------------------------------')
+                print('step: ', self.step)
+                logger.log_scalars(loss_dict, self.step)
+            
+            with torch.no_grad():
+                action = self.sample_action(obs)
+            next_obs, rew, done, _ = env.step(action)
+            self.data_buffer.add(obs, action, rew, next_obs, done)
+
+            episode_rewards[-1] += rew
+
+            if done:
+                obs = env.reset()
+                done = False
+                if i != collect_steps-1:
+                    episode_rewards.append(0.0)
+            else:
+                obs = next_obs 
+            self.step += self.action_repeat
+
+        return np.array(episode_rewards)
+    
+    def evaluate(self, env, eval_episodes, render=False):
+        episode_rew = np.zeros((eval_episodes))
+        video_images = [[] for _ in range(eval_episodes)]
+        self.train(False)
+
+        for i in range(eval_episodes):
+            obs = env.reset()
+            done = False
+
+            while not done:
+                with torch.no_grad():
+                    action = self.select_action(obs)
+                next_obs, rew, done, _ = env.step(action)
+                episode_rew[i] += rew
+
+                if render:
+                    video_images[i].append(obs['image'].transpose(1, 2, 0).copy())
+                obs = next_obs
+        
+        self.train(True)
+        return episode_rew, np.array(video_images[:self.max_videos_to_save])#, pred_videos # (T, H, W, C)
 
     def save(self, model_dir, step):
         torch.save(
@@ -282,62 +314,25 @@ class AgentBase:
 class AgentSACBase(AgentBase):
     def __init__(
         self, 
-        obs_shape: int,
-        action_shape: int,
-        action_range: float,
-        device: Union[torch.device, str],
-        agent_name: str,
-        hidden_dim: int,
-        discount: float,
-        init_temperature: float, 
-        alpha_lr: float, 
-        alpha_beta: float, 
-        actor_lr: float, 
-        actor_beta: float, 
-        actor_log_std_min: float, 
-        actor_log_std_max: float,   
-        actor_update_freq: float, 
-        critic_lr: float, 
-        critic_beta: float, 
-        critic_tau: float, 
-        critic_target_update_freq: int,
-        encoder_type: float,
-        encoder_feature_dim: float, 
-        encoder_tau: float, 
-        num_layers: int, 
-        num_filters: int, 
-        builtin_encoder: bool,
-        frame_stack: int,
-        image_size: int,
-        buffer_size: int,
-        batch_size: int
+        obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
+        agent, 
+        encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+        actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+        critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+        pre_transform_image_size, image_size, framestack, 
+        buffer_size, batch_size, 
+        discount, action_repeat, max_videos_to_save, 
+        init_temperature, alpha_lr, alpha_beta
     ):
         super().__init__(
-            obs_shape,
-            action_shape,
-            device,
-            agent_name,
-            hidden_dim,
-            discount,
-            actor_lr,
-            actor_beta,
-            actor_log_std_min,
-            actor_log_std_max,
-            actor_update_freq,
-            critic_lr,
-            critic_beta,
-            critic_tau,
-            critic_target_update_freq,
-            encoder_type,
-            encoder_feature_dim,
-            encoder_tau,
-            num_layers,
-            num_filters,
-            builtin_encoder,
-            frame_stack,
-            image_size,
-            buffer_size,
-            batch_size
+            obs_shape, action_shape, action_range, device, 
+            agent, 
+            encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+            actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+            critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+            pre_transform_image_size, image_size, framestack, 
+            buffer_size, batch_size, 
+            discount, action_repeat, max_videos_to_save
         )
 
         self.init_temperature = init_temperature

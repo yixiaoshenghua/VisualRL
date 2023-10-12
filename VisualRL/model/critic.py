@@ -37,23 +37,12 @@ class QFunction(nn.Module):
 class Critic(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(
-        self,
-        obs_shape, 
-        action_shape,
-        agent_name, 
-        hidden_dim, 
-        encoder_type,
-        encoder_feature_dim, 
-        num_layers, 
-        num_filters,
-        output_logits, 
-        builtin_encoder=True
+        self, agent, obs_shape, action_shape, hidden_dim, encoder_type,
+        encoder_feature_dim, num_layers, num_filters, output_logits, builtin_encoder=True
     ):
-        
         super().__init__()
-        self.drq = (agent_name == "drq")
+        self.drq = agent == "drq"
         self.builtin_encoder = builtin_encoder
-                               
 
         if self.builtin_encoder:
             self.encoder = make_encoder(

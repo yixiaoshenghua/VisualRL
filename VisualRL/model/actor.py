@@ -13,32 +13,17 @@ LOG_FREQ = 10000
 class Actor(nn.Module):
     """CNN actor network"""
     def __init__(
-        self,
-        obs_shape, 
-        action_shape,
-        agent_name,
-        hidden_dim, 
-        encoder_type,
-        encoder_feature_dim, 
-        log_std_min, 
-        log_std_max, 
-        num_layers, 
-        num_filters, 
-        output_logits, 
-        builtin_encoder=True
+        self, agent, obs_shape, action_shape, hidden_dim, encoder_type,
+        encoder_feature_dim, log_std_min, log_std_max, num_layers, num_filters, output_logits, builtin_encoder=True
     ):
         super().__init__()
-        self.drq = (agent_name == "drq")
+        self.drq = agent == "drq"
         self.builtin_encoder = builtin_encoder
         
         if self.builtin_encoder:
             self.encoder = make_encoder(
-                encoder_type, 
-                obs_shape, 
-                encoder_feature_dim, 
-                num_layers,
-                num_filters, 
-                output_logits=output_logits
+                encoder_type, obs_shape, encoder_feature_dim, num_layers,
+                num_filters, output_logits=output_logits
             )
 
         self.log_std_min = log_std_min

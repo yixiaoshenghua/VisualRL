@@ -9,42 +9,30 @@ import kornia
 import copy
 from utils.data_augs import center_crop_images, random_crop
 
-# FIXME: we may not need this
-def make_replay_buffer(args, action_shape, device):
-    if args.agent.lower() == 'curl':
+def make_replay_buffer(
+        action_shape, device, 
+        agent, 
+        pre_transform_image_size, image_size, frame_stack, 
+        buffer_size, batch_size, train_seq_length=None, image_pad=4
+):
+    if agent == 'curl':
         replay_buffer = ReplayBuffer(
-            obs_shape=(3*args.frame_stack, args.pre_transform_image_size, args.pre_transform_image_size),
+            obs_shape=(3*frame_stack, pre_transform_image_size, pre_transform_image_size),
             action_shape=action_shape,
-            capacity=args.buffer_size,
-            batch_size=args.batch_size,
+            capacity=buffer_size,
+            batch_size=batch_size,
             device=device,
-            image_size=args.image_size
-        )
-    elif args.agent.lower() == 'dreamerv1' or args.agent.lower() == 'dreamerv2':
-        replay_buffer = ReplayBuffer(
-            obs_shape=(3*args.frame_stack, args.pre_transform_image_size, args.pre_transform_image_size), 
-            action_shape=action_shape, 
-            capacity=args.buffer_size, 
-            batch_size=args.batch_size,
-            device=device, 
-            seq_len=args.train_seq_len
-        )
-    elif args.agent.lower() == 'drq':
-        replay_buffer = ReplayBuffer(
-            obs_shape=(3*args.frame_stack, args.image_size, args.image_size),
-            action_shape=action_shape,
-            capacity=args.buffer_size,
-            batch_size=args.batch_size,
-            device=device,
-            image_pad=args.image_pad
+            image_size=image_size
         )
     else:
         replay_buffer = ReplayBuffer(
-            obs_shape=(3*args.frame_stack, args.image_size, args.image_size),
-            action_shape=action_shape,
-            capacity=args.buffer_size,
-            batch_size=args.batch_size,
-            device=device
+            obs_shape=(3*frame_stack, image_size, image_size), 
+            action_shape=action_shape, 
+            capacity=buffer_size, 
+            batch_size=batch_size, 
+            device=device, 
+            seq_len=train_seq_length, 
+            image_pad=image_pad
         )
     return replay_buffer
 
@@ -53,7 +41,7 @@ class ReplayBuffer(Dataset):
     """Buffer to store environment transitions."""
     def __init__(
         self, obs_shape, action_shape, capacity, batch_size, device,
-        seq_len = None, image_pad=4,
+        seq_len=None, image_pad=4,
         path_len=None, image_size=84, transform=None
     ):
         self.capacity = capacity
@@ -87,7 +75,7 @@ class ReplayBuffer(Dataset):
         np.copyto(self.actions[self.idx], action)
         np.copyto(self.rewards[self.idx], reward)
         np.copyto(self.next_obses[self.idx], next_obs['image'])
-        np.copyto(self.not_dones[self.idx], not done)
+        np.copyto(self.not_dones[self.idx], 1-done)
 
         self.idx = (self.idx + 1) % self.capacity
         self.full = self.full or self.idx == 0
@@ -171,12 +159,12 @@ class ReplayBuffer(Dataset):
         obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
         acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
         rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
-        nonterms = torch.tensor(nonterms, dtype=torch.float32).to(self.device).unsqueeze(-1)
+        nonterms = torch.tensor((nonterms), dtype=torch.float32).to(self.device).unsqueeze(-1)
         return obs, acs, rews, nonterms
 
     def _retrieve_batch(self, idxs, n, L):
         vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
-        observations = self.obses[vec_idxs]
+        observations = self.next_obses[vec_idxs]
         return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.not_dones[vec_idxs].reshape(L, n)
     
     def _sample_sequential_idx(self, n, L):

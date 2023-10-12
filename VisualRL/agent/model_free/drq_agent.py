@@ -18,18 +18,33 @@ import utils.data_augs as rad
 
 class AgentDrQ(AgentSACBase):
     """Data regularized Q: actor-critic method for learning from pixels."""
-    def __init__(self,
-        args,
-        obs_shape: int,
-        action_shape: int,
-        device: Union[torch.device, str],
-        init_temperature: float = 0.01,
-        alpha_lr: float = 1e-3,
-        alpha_beta: float = 0.9,
-        action_range: list = [-1., 1.]
-        ):
-        super().__init__(args, obs_shape, action_shape, device, init_temperature, alpha_lr, alpha_beta)
-        self.action_range = action_range
+    def __init__(
+        self, 
+        obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
+        agent, 
+        encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+        actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+        critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+        pre_transform_image_size, image_size, framestack, 
+        buffer_size, batch_size, 
+        discount, 
+        action_repeat, max_videos_to_save, 
+        init_temperature, alpha_lr, alpha_beta, 
+        image_pad
+    ):
+        super().__init__(
+            obs_shape, action_shape, action_range, device, 
+            agent, 
+            encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+            actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+            critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+            pre_transform_image_size, image_size, framestack, 
+            buffer_size, batch_size, 
+            discount, 
+            action_repeat, max_videos_to_save, 
+            init_temperature, alpha_lr, alpha_beta
+        )
+        self.image_pad = image_pad
         self.image_size = obs_shape[-1]
         self.decoder = None
 
@@ -45,7 +60,12 @@ class AgentDrQ(AgentSACBase):
 
         self.train()
         self.critic_target.train()
-        self.data_buffer = make_replay_buffer(args, action_shape, device)
+        self.data_buffer = make_replay_buffer(
+            action_shape, device, 
+            agent, 
+            pre_transform_image_size, image_size, framestack, 
+            buffer_size, batch_size, image_pad=image_pad
+        )
 
     def select_action(self, obs):
         obs = torch.FloatTensor(obs['image']).to(self.device)

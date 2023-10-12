@@ -20,13 +20,15 @@ LOG_FREQ = 10000
 class AgentSACAE(AgentSACBase):
     def __init__(
         self, 
-        args,
-        obs_shape: int,
-        action_shape: int,
-        device: Union[torch.device, str],
-        init_temperature: float = 0.01,
-        alpha_lr: float = 1e-3,
-        alpha_beta: float = 0.9,
+        obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
+        agent, 
+        encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+        actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+        critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+        pre_transform_image_size, image_size, framestack, 
+        buffer_size, batch_size, 
+        discount, 
+        init_temperature, alpha_lr, alpha_beta, 
         encoder_lr: float = 1e-3,
         decoder_type: str = 'pixel',
         decoder_lr: float = 1e-3,
@@ -34,7 +36,17 @@ class AgentSACAE(AgentSACBase):
         decoder_latent_lambda: float = 0.0,
         decoder_weight_lambda: float = 0.0
     ):
-        super().__init__(args, obs_shape, action_shape, device, init_temperature, alpha_lr, alpha_beta)
+        super().__init__(
+            obs_shape, action_shape, action_range, device, 
+            agent, 
+            encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+            actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+            critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+            pre_transform_image_size, image_size, framestack, 
+            buffer_size, batch_size, 
+            discount, 
+            init_temperature, alpha_lr, alpha_beta
+        )
 
         self.encoder_lr = encoder_lr
         self.decoder_type = decoder_type
@@ -57,7 +69,6 @@ class AgentSACAE(AgentSACBase):
                 weight_decay=decoder_weight_lambda
             )
 
-        self.data_buffer = make_replay_buffer(args, action_shape, device)
         self.train()
         self.critic_target.train()
 

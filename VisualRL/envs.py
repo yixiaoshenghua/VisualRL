@@ -1,4 +1,3 @@
-import gym
 import os
 import random
 from collections import deque
@@ -7,6 +6,11 @@ from PIL import Image
 import skvideo.io
 import cv2
 import tqdm
+try:
+    import gym
+except ImportError:
+    print("gym not installed, trying gymnasium instead.")
+    import gymnasium as gym
 
 DMC_ENV = ['cheetah', 'walker', 'hopper', 'finger', 'quadruped', 'reacher', 'ball']
 GYM_ROBOT_ENV = ['Fetch']
@@ -14,8 +18,6 @@ GYM_ROBOT_ENV = ['Fetch']
 # -------------------------------- Make Environment from args ------------------------------------------
 
 def make_env(args):
-    
-    env_domain, env_task = args.env.split('-')
     
     print(args.env.split('-')[0], args.env.split('-')[:2], '-'.join(args.env.split('-')[:2]))
     if args.env.split('-')[0] in DMC_ENV:
@@ -134,7 +136,6 @@ class DeepMindControl:
           raise ValueError("Only render mode 'rgb_array' is supported.")
         # if self.args.change_camera_freq > 0:
         #     return self._env.physics.render(*self._size, camera_id=int(int(self._steps//self.args.change_camera_freq)%2))
-        print(self._camera)
         return self._env.physics.render(*self._size, camera_id=self._camera)
 
 class Claw:

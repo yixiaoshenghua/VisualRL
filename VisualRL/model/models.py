@@ -36,13 +36,12 @@ class RSSM(nn.Module):
 
         self.fc_state_action = nn.Linear(self.stoch_size + self.action_size, self.deter_size) if not self.discrete \
                             else nn.Linear(self.stoch_size*self.discrete + self.action_size, self.deter_size)
-        self.fc_embed_prior = nn.Linear(self.deter_size, self.hidden_size)
-        self.fc_state_prior  = nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
-                            else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)
+        self.fc_embed_prior = nn.ModuleList([nn.Linear(self.deter_size, self.hidden_size)])
+        self.fc_state_prior = nn.ModuleList([nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
+                            else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)])
         self.fc_embed_posterior = nn.Linear(self.embedding_size + self.deter_size, self.hidden_size)
         self.fc_state_posterior = nn.Linear(self.hidden_size, 2*self.stoch_size) if not self.discrete \
                             else nn.Linear(self.hidden_size, self.stoch_size*self.discrete)
-
 
     def init_state(self, batch_size, device):
         if self.discrete:
@@ -66,39 +65,42 @@ class RSSM(nn.Module):
     def get_dist(self, state):
         if self.discrete:
             logit = state['logit'].float()
-            distribution = OneHotDist(logit)
+            distribution = OneHotDist(logit) # Quantization
         else:
             mean, std = state['mean'], state['std']
             distribution = distributions.Normal(mean, std)
-        distribution = distributions.independent.Independent(distribution, 1)
+        distribution = Independent(distribution, 1)
         return distribution
 
     def observe_step(self, prev_state, prev_action, obs_embed, nonterm=1.0):
 
-        prior = self.imagine_step(prev_state, prev_action, nonterm)
-        posterior_embed = self.act_fn(self.fc_embed_posterior(torch.cat([obs_embed, prior['deter']], dim=-1)))
-        posterior = self.fc_state_posterior(posterior_embed)
+        prior = self.imagine_step(prev_state, prev_action, nonterm) # h_t, \hat{z}_t <- p_{phi}(\hat{z}_t | f_{phi}([h_{t-1}, z_{t-1}], a_{t-1}))
+        posterior_embed = self.act_fn(self.fc_embed_posterior(torch.cat([obs_embed, prior['deter']], dim=-1))) # z_t ~ q_{phi}(z_t | h_t, x_t)
+        posterior = self.fc_state_posterior(posterior_embed) 
         stats = self.suff_stats_layer(posterior)
-        stoch = self.get_dist(stats).sample()
+        stoch = self.get_dist(stats).rsample()
 
         posterior = {'stoch': stoch, 'deter': prior['deter'], **stats}
         return prior, posterior
 
     def imagine_step(self, prev_state, prev_action, nonterm=1.0):
-        prev_stoch = prev_state['stoch']
+        prev_stoch = prev_state['stoch'] # (B, s)
         if self.discrete:
             prev_stoch = prev_stoch.reshape(*prev_stoch.shape[:-2], self.stoch_size*self.discrete)
-        state_action = self.act_fn(self.fc_state_action(torch.cat([prev_stoch*nonterm, prev_action], dim=-1)))
-        deter = self.rnn(state_action, prev_state['deter']*nonterm)
-        prior_embed = self.act_fn(self.fc_embed_prior(deter))
-        prior = self.fc_state_prior(prior_embed)
-        stats = self.suff_stats_layer(prior)
-        stoch = self.get_dist(stats).sample()
-
+        state_action = self.act_fn(self.fc_state_action(torch.cat([prev_stoch*nonterm, prev_action], dim=-1))) # za_{t-1}=[z_{t-1}, a_{t-1}]
+        deter = self.rnn(state_action, prev_state['deter']*nonterm) # (B, h) h_t = f_{phi}(h_{t-1}, za_{t-1})
+        stats = self.suff_stats_ensemble(deter) # \hat{z}_t ~ p_{phi}(\hat{z}_t | h_t)
+        index = np.random.choice(np.arange(1))
+        stats = {k: v[index] for k, v in stats.items()} # (B, ...)
+        stoch = self.get_dist(stats).rsample()
         prior = {'stoch': stoch, 'deter': deter, **stats}
         return prior
 
     def suff_stats_layer(self, x):
+        '''
+        x: the output logit by the prior or posterior network
+        NOTE: we can add some complex distribution transformations here like normalizing flows.
+        '''
         if self.discrete:
             logit = x.reshape(*x.shape[:-1], self.stoch_size, self.discrete)
             return {'logit': logit}
@@ -106,9 +108,20 @@ class RSSM(nn.Module):
             mean, std = x.chunk(2, -1)
             std = F.softplus(std) + 0.1
             return {'mean': mean, 'std': std}
+    
+    def suff_stats_ensemble(self, x):
+        '''Plan2Explore'''
+        stats = []
+        for i in range(1):
+            prior_embed = self.act_fn(self.fc_embed_prior[i](x))
+            prior = self.fc_state_prior[i](prior_embed)
+            stat = self.suff_stats_layer(prior) # -> mean, std
+            stats.append(stat)
+        stats = {k: torch.stack([stat[k] for stat in stats]) for k in stats[0].keys()}
+        return stats # (ensemble, B, ...)
 
     def observe_rollout(self, obs_embed, actions, nonterms, prev_state, horizon):
-
+        
         priors = []
         posteriors = []
 
@@ -124,7 +137,21 @@ class RSSM(nn.Module):
 
         return priors, posteriors
 
-    def get_kl_loss(self, prior, posterior, kl_alpha, free_nats, kl_balancing):
+    def imagine_rollout(self, actions, nonterms, prev_state, horizon):
+        priors = []
+
+        for t in range(horizon):
+            prev_action = actions[t] * nonterms[t]
+            prior_state = self.imagine_step(prev_state, prev_action, nonterms[t]) # (B, ...)
+            priors.append(prior_state)
+            prev_state = prior_state
+
+        priors = self.stack_states(priors, dim=0)
+
+        return priors
+
+    def get_div_loss(self, prior, posterior, kl_alpha, free_nats, kl_balancing):
+        divergence = distributions.kl.kl_divergence
         prior_dist = self.get_dist(prior)
         post_dist = self.get_dist(posterior)
         if kl_balancing:
@@ -132,17 +159,16 @@ class RSSM(nn.Module):
             prior_no_grad = self.detach_state(prior)
             
             # kl_balancing
-            kl_loss = kl_alpha * (torch.mean(distributions.kl.kl_divergence(
-                               self.get_dist(post_no_grad), prior_dist)))
-            kl_loss += (1-kl_alpha) * (torch.mean(distributions.kl.kl_divergence(
-                               post_dist, self.get_dist(prior_no_grad))))
+            div_loss = kl_alpha * (torch.mean(divergence(
+                            self.get_dist(post_no_grad), prior_dist)))
+            div_loss += (1-kl_alpha) * (torch.mean(divergence(
+                            post_dist, self.get_dist(prior_no_grad))))
         else:
-            kl_loss = torch.mean(distributions.kl.kl_divergence(post_dist, prior_dist))
-            kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), free_nats))
-        return kl_loss
+            div_loss = torch.mean(divergence(post_dist, prior_dist))
+            div_loss = torch.max(div_loss, div_loss.new_full(div_loss.size(), free_nats))
+        return div_loss
 
-
-    def stack_states(self, states, dim=0):
+    def stack_states(self, states, dim=0): # (T, B, ...)
         if self.discrete:
             return dict(
                 logit  = torch.stack([state['logit'] for state in states], dim=dim),
@@ -314,11 +340,13 @@ class EnsembleMaskConvDecoder(nn.Module):
 # used for reward and value models
 class DenseDecoder(nn.Module):
 
-    def __init__(self, stoch_size, deter_size, output_shape, n_layers, units, activation, dist, discrete = False):
+    def __init__(self, stoch_size, deter_size, output_shape, n_layers, units, activation, dist, discrete = False, action_size=None):
 
         super().__init__()
 
         self.input_size = stoch_size + deter_size if not discrete else stoch_size * discrete + deter_size
+        if action_size is not None:
+            self.input_size += action_size
         self.output_shape = output_shape
         self.n_layers = n_layers
         self.units = units
@@ -345,8 +373,8 @@ class DenseDecoder(nn.Module):
             return distributions.independent.Independent(
                 distributions.Normal(out, 1), len(self.output_shape))
         if self.dist == 'binary':
-            return distributions.independent.Independent(
-                distributions.Bernoulli(logits =out), len(self.output_shape))
+            return Bernoulli(distributions.independent.Independent(
+                distributions.Bernoulli(logits=out), len(self.output_shape)))
         if self.dist == 'none':
             return out
 
@@ -396,7 +424,7 @@ class ActionDecoder(nn.Module):
             dist = TruncNormalDist(torch.tanh(mean), std, -1, 1)
             dist = Independent(dist, 1)
         elif self.dist == 'tanh_normal':
-            raw_init_std = np.log(np.exp(self._init_std)-1)
+            raw_init_std = np.log(np.exp(self._init_std) - 1)
             action_mean = self._mean_scale * torch.tanh(mean / self._mean_scale)
             action_std = F.softplus(std + raw_init_std) + self._min_std
 
@@ -426,9 +454,11 @@ class TanhBijector(distributions.Transform):
         self.codomain = constraints.interval(-1.0, 1.0)
 
     @property
-    def sign(self): return 1.
+    def sign(self): 
+        return 1.
 
-    def _call(self, x): return torch.tanh(x)
+    def _call(self, x): 
+        return torch.tanh(x)
 
     def atanh(self, x):
         return 0.5 * torch.log((1 + x) / (1 - x))
@@ -478,6 +508,9 @@ class SampleDist:
 
     def sample(self):
         return self._dist.sample()
+    
+    def rsample(self):
+        return self._dist.rsample()
 
 class OneHotDist(distributions.OneHotCategorical):
 
@@ -509,6 +542,9 @@ class OneHotDist(distributions.OneHotCategorical):
 
         sample += (probs - probs.detach())  # .type(self._sample_dtype)
         return sample
+
+    def rsample(self, sample_shape=(), seed=None):  # note doenst have rsample
+        return self.sample(sample_shape, seed=seed)
 
     # custom log_prob more stable
     def log_prob(self, value):
@@ -675,9 +711,6 @@ class TruncNormalDist(TruncatedNormal):
     def sample(self, *args, **kwargs):
         event = super().rsample(*args, **kwargs)
         if self._clip:
-            # clipped = tf.clip_by_value(
-            #     event, self.low + self._clip, self.high - self._clip)
-            # event = event - tf.stop_gradient(event) + tf.stop_gradient(clipped)
 
             clipped = torch.clamp(event, self.low + self._clip, self.high - self._clip)
             event = event - event.detach() + clipped.detach()
@@ -689,3 +722,34 @@ class Independent(distributions.Independent):
     @property
     def mode(self):
         return self.base_dist.mode
+    
+    def rsample(self):
+        return self.base_dist.rsample()
+    
+
+class Bernoulli:
+
+    def __init__(self, dist=None):
+        super().__init__()
+        self._dist = dist
+        self.mean = dist.mean
+
+    def __getattr__(self, name):
+        return getattr(self._dist, name)
+
+    def entropy(self):
+        return self._dist.entropy()
+
+    def mode(self):
+        _mode = torch.round(self._dist.mean)
+        return _mode.detach() +self._dist.mean - self._dist.mean.detach()
+
+    def sample(self, sample_shape=()):
+        return self._dist.rsample(sample_shape)
+
+    def log_prob(self, x):
+        _logits = self._dist.base_dist.logits
+        log_probs0 = -F.softplus(_logits)
+        log_probs1 = -F.softplus(-_logits)
+
+        return log_probs0 * (1-x) + log_probs1 * x

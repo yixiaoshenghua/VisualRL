@@ -10,7 +10,11 @@ from torch.nn import Module
 from torch import distributions as pyd
 import math
 import torch.nn.functional as F
-import gym
+try:
+    import gym
+except ImportError:
+    print("gym not installed, trying gymnasium instead.")
+    import gymnasium as gym
 
 
 class eval_mode(object):
@@ -374,7 +378,6 @@ def namedarraytuple(typename, field_names, return_namedtuple_cls=False,
 #         num_features_after_cnn = np.prod(list(x.shape))
 #         return num_features_after_cnn
 
-# FIXME: We may not need this
 def center_crop_image(image, output_size):
     h, w = image.shape[1:]
     new_h, new_w = output_size, output_size

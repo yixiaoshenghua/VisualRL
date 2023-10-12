@@ -70,25 +70,39 @@ class CURL(nn.Module):
 class AgentCURL(AgentSACBase):
     def __init__(
         self, 
-        args,
-        obs_shape: int,
-        action_shape: int,
-        device: Union[torch.device, str],
-        init_temperature: float = 0.01,
-        alpha_lr: float = 1e-3,
-        alpha_beta: float = 0.9,
+        obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
+        agent, 
+        encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+        actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+        critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+        pre_transform_image_size, image_size, framestack, 
+        buffer_size, batch_size, 
+        discount, 
+        action_repeat, max_videos_to_save, 
+        init_temperature, alpha_lr, alpha_beta, 
         encoder_lr: float = 1e-3,
         cpc_update_freq: int = 1,
-        log_interval: int = 100,
         detach_encoder: bool = False,
         curl_latent_dim: int = 128,
         data_augs: str = ''
     ):
-        super().__init__(args, obs_shape, action_shape, device, init_temperature, alpha_lr, alpha_beta)
+        super().__init__(
+            obs_shape, action_shape, action_range, device, 
+            agent, 
+            encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
+            actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
+            critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
+            pre_transform_image_size, image_size, framestack, 
+            buffer_size, batch_size, 
+            discount, 
+            action_repeat, max_videos_to_save, 
+            init_temperature, alpha_lr, alpha_beta
+        )
         
+        self.action_repeat = action_repeat
+        self.max_videos_to_save = max_videos_to_save
         self.encoder_lr = encoder_lr
         self.cpc_update_freq = cpc_update_freq
-        self.log_interval = log_interval
         self.detach_encoder = detach_encoder
         self.curl_latent_dim = curl_latent_dim
         self.image_size = obs_shape[-1]
@@ -135,7 +149,6 @@ class AgentCURL(AgentSACBase):
         self.train()
         self.critic_target.train()
 
-        self.data_buffer = make_replay_buffer(args, action_shape, device)
 
     def train(self, training=True):
         self.training = training

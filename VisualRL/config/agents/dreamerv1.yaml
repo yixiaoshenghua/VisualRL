@@ -1,0 +1,68 @@
+# ---------------------------Environment---------------------------
+pre_transform_image_size: 64
+image_size: 64
+frame_stack: 1
+action_repeat: 2
+# -----------------------------Dreamer-----------------------------
+imagine_horizon: 15
+discount: 0.99
+td_lambda: 0.95
+
+# Exploration on action
+action_noise: 0.3
+exploration_decay: 0.0
+exploration_min: 0.0
+# --------------------------"Actor-Critic"--------------------------
+actor_grad: "auto"
+actor_dist: "tanh_normal"
+actor_min_std: 0.1 #1.0e-4
+actor_init_std: 5.0
+
+slow_target: False
+slow_target_update: 100
+slow_target_fraction: 1.0
+
+actor_lr: 8.0e-5
+critic_lr: 8.0e-5
+# ---------------------Data collection & replay--------------------
+buffer_size: 1000000
+batch_size: 50
+train_seq_length: 50
+init_steps: 5000
+# ---------------------------World Model---------------------------
+# RSSM
+stoch_size: 30
+deter_size: 200
+hidden_size: 200
+
+# Encoder
+obs_embed_size: 1024
+
+# Decoder
+num_units: 400
+
+# Network
+cnn_activation_function: "elu" # "relu"
+dense_activation_function: "elu"
+discrete: 0
+use_disc_model: False
+disc_loss_coeff: 10.0
+reward_dist: 'normal'
+discount_dist: 'binary'
+
+# Optimization
+model_lr: 3.0e-4 #6.0e-4
+adam_epsilon: 1.0e-5 #1.0e-7
+adam_weight_decay: 1.0e-6 #0.0
+grad_clip_norm: 100.0
+
+# Divergence
+kl_alpha: 0.8
+kl_balance: False
+free_nats: 1.0 #3.0
+kl_loss_coeff: 1.0
+# -----------------------Saving and Restoring-----------------------
+restore: False
+policy_checkpoint_path: ''
+wm_checkpoint_path: ''
+max_videos_to_save: 2
