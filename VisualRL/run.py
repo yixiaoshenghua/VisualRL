@@ -34,6 +34,7 @@ from agent.model_free.drq_agent import AgentDrQ
 # from agent.model_free.dribo_agent import AgentDRIBO
 from agent.model_based.dreamer_agent import AgentDreamer
 from agent.model_based.planet_agent import AgentPlaNet
+from agent.model_based.bird_agent import AgentBird
 # from agent.model_based.tia_agent import AgentTIA
 
 import numpy as np
@@ -47,6 +48,7 @@ os.environ['MUJOCO_GL'] = 'egl'
 
 AGENTS = {
     # "baseline": BaselineAgent,
+    "bird": AgentBird, 
     "curl": AgentCURL,
     "dbc": AgentDBC,
     # "deepmdp": DeepMDPAgent,

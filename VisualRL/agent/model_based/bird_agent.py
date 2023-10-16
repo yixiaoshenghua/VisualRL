@@ -27,6 +27,7 @@ class AgentBird:
             action_noise, exploration_decay, exploration_min, 
             pre_transform_image_size, image_size, frame_stack, 
             buffer_size, batch_size, train_seq_length, init_steps, action_repeat, 
+            reweight_clip, 
             stoch_size, deter_size, hidden_size, obs_embed_size, num_units, 
             cnn_activation_function, dense_activation_function, 
             discrete, 
@@ -48,6 +49,7 @@ class AgentBird:
         self.actor_dist = actor_dist
         self.actor_min_std = actor_min_std
         self.actor_init_std = actor_init_std
+        self.reweight_clip = reweight_clip
         # slow target
         self.slow_target = slow_target
         self.slow_target_update = slow_target_update
@@ -187,7 +189,11 @@ class AgentBird:
             posterior = self.world_model.rssm.detach_state(self.world_model.rssm.seq_to_batch(self.world_model.posterior))
 
         with FreezeParameters(self.world_model_modules):
-            self.imag_feat, imag_actions, imag_rews = self.imagine(posterior, self.imagine_horizon)
+            self.imag_feat, imag_actions, imag_rews, imag_probs = self.imagine(posterior, self.imagine_horizon)
+        
+        imag_probs = imag_probs[1:]
+        self.imag_probs = (imag_probs - imag_probs.mean()) / (imag_probs.std() + 1e-9) + 1
+        self.imag_probs = torch.clamp(self.imag_probs, 1 - self.reweight_clip, 1 + self.reweight_clip)
 
         # self.imag_feat = imag_feats
 
@@ -208,7 +214,7 @@ class AgentBird:
 
         discounts = torch.cat([torch.ones_like(discounts[:1]), discounts[1:-1]], 0)
         self.discounts = torch.cumprod(discounts, 0).detach()
-        actor_loss = -torch.mean(self.discounts * self.returns)
+        actor_loss = -torch.mean(self.imag_probs.detach() * self.discounts * self.returns)
 
         loss_dict['actor_loss'] = actor_loss
         log_dict['train/actor_loss'] = actor_loss.item()
@@ -228,7 +234,7 @@ class AgentBird:
             value_targ = self.returns.detach()
 
         value_dist = self.critic(value_feat)  
-        value_loss = -torch.mean(self.discounts * value_dist.log_prob(value_targ).unsqueeze(-1))
+        value_loss = -torch.mean(self.imag_probs.detach() * self.discounts * value_dist.log_prob(value_targ).unsqueeze(-1))
 
         loss_dict['value_loss'] = value_loss
         log_dict['train/value_loss'] = value_loss.item()
@@ -342,23 +348,28 @@ class AgentBird:
 
     def imagine(self, prev_state, horizon):
 
-        feature = self.world_model.set_state(prev_state, return_feat=True)
+        state = self.world_model.set_state(prev_state, return_feat=False)
+        feature = self.world_model.rssm.get_feat(state)
         features = [feature]
         actions = [torch.zeros_like(self.actor(feature.detach()))]
         rewards = [self.world_model.reward_model(feature).mean]
+        probs = [state['log_prob']]
 
         for t in range(horizon):
             action = self.actor(feature.detach())
-            feature, rew, _, _ = self.world_model.step(action, return_feat=True)
+            state, rew, _, _ = self.world_model.step(action, return_feat=False)
+            feature = self.world_model.rssm.get_feat(state)
             actions.append(action)
             features.append(feature)
             rewards.append(rew)
+            probs.append(state['log_prob'])
 
         features = torch.stack(features, dim=0)
         actions = torch.stack(actions, dim=0)
         rewards = torch.stack(rewards, dim=0)
+        probs = torch.stack(probs, dim=0)
 
-        return features, actions, rewards
+        return features, actions, rewards, probs.detach()
 
     def evaluate(self, env, eval_episodes, render=False):
 

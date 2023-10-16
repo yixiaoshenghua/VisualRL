@@ -13,7 +13,7 @@ from model.critic import Critic
 from model.transition_model import make_transition_model
 from agent.model_free.base_agent import AgentSACBase
 from utils.pytorch_util import weight_init
-from VisualRL.utils.replay_buffer import ReplayBuffer
+from utils.replay_buffer import ReplayBuffer
 
 
 LOG_FREQ = 10000

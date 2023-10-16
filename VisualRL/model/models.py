@@ -3,8 +3,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as distributions
-from torch.distributions import constraints
+import math
+from numbers import Number
+from torch.distributions.utils import broadcast_all
+from torch.distributions import Distribution, constraints
 from torch.distributions.transformed_distribution import TransformedDistribution
+
+
+CONST_SQRT_2 = math.sqrt(2)
+CONST_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
+CONST_INV_SQRT_2 = 1 / math.sqrt(2)
+CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
+CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
 
 _str_to_activation = {
     'relu': nn.ReLU(),
@@ -48,13 +58,17 @@ class RSSM(nn.Module):
             return dict(
                 logit = torch.zeros(batch_size, self.stoch_size, self.discrete).to(device),
                 stoch = torch.zeros(batch_size, self.stoch_size, self.discrete).to(device),
-                deter = torch.zeros(batch_size, self.deter_size).to(device))
+                deter = torch.zeros(batch_size, self.deter_size).to(device), 
+                log_prob = torch.zeros(batch_size, 1).to(device)
+                )
         else:   
             return dict(
                 mean = torch.zeros(batch_size, self.stoch_size).to(device),
                 std  = torch.zeros(batch_size, self.stoch_size).to(device),
                 stoch = torch.zeros(batch_size, self.stoch_size).to(device),
-                deter = torch.zeros(batch_size, self.deter_size).to(device))
+                deter = torch.zeros(batch_size, self.deter_size).to(device), 
+                log_prob = torch.zeros(batch_size, 1).to(device)
+                )
 
     def get_feat(self, state):
         stoch = state['stoch']
@@ -79,8 +93,9 @@ class RSSM(nn.Module):
         posterior = self.fc_state_posterior(posterior_embed) 
         stats = self.suff_stats_layer(posterior)
         stoch = self.get_dist(stats).rsample()
+        log_prob = self.get_dist(stats).log_prob(stoch).unsqueeze(-1)
 
-        posterior = {'stoch': stoch, 'deter': prior['deter'], **stats}
+        posterior = {'stoch': stoch, 'deter': prior['deter'], 'log_prob':log_prob, **stats}
         return prior, posterior
 
     def imagine_step(self, prev_state, prev_action, nonterm=1.0):
@@ -93,7 +108,8 @@ class RSSM(nn.Module):
         prior = self.fc_state_prior(prior_embed)
         stats = self.suff_stats_layer(prior)
         stoch = self.get_dist(stats).rsample()
-        prior = {'stoch': stoch, 'deter': deter, **stats}
+        log_prob = self.get_dist(stats).log_prob(stoch).unsqueeze(-1)
+        prior = {'stoch': stoch, 'deter': deter, 'log_prob': log_prob, **stats}
         return prior
 
     def suff_stats_layer(self, x):
@@ -173,39 +189,51 @@ class RSSM(nn.Module):
             return dict(
                 logit  = torch.stack([state['logit'] for state in states], dim=dim),
                 stoch = torch.stack([state['stoch'] for state in states], dim=dim),
-                deter = torch.stack([state['deter'] for state in states], dim=dim))
+                deter = torch.stack([state['deter'] for state in states], dim=dim), 
+                log_prob = torch.stack([state['log_prob'] for state in states], dim=dim)
+                )
         else:
             return dict(
                 mean = torch.stack([state['mean'] for state in states], dim=dim),
                 std  = torch.stack([state['std'] for state in states], dim=dim),
                 stoch = torch.stack([state['stoch'] for state in states], dim=dim),
-                deter = torch.stack([state['deter'] for state in states], dim=dim))
+                deter = torch.stack([state['deter'] for state in states], dim=dim), 
+                log_prob = torch.stack([state['log_prob'] for state in states], dim=dim)
+                )
 
     def detach_state(self, state):
         if self.discrete:
             return dict(
                 logit = state['logit'].detach(),
                 stoch = state['stoch'].detach(),
-                deter = state['deter'].detach())
+                deter = state['deter'].detach(), 
+                log_prob = state['log_prob'].detach()
+                )
         else:
             return dict(
                 mean = state['mean'].detach(),
                 std  = state['std'].detach(),
                 stoch = state['stoch'].detach(),
-                deter = state['deter'].detach())
+                deter = state['deter'].detach(), 
+                log_prob = state['log_prob'].detach()
+                )
 
     def seq_to_batch(self, state):
         if self.discrete:
             return dict(
                 logit = torch.reshape(state['logit'], (state['logit'].shape[0]* state['logit'].shape[1], *state['logit'].shape[2:])),
                 stoch = torch.reshape(state['stoch'], (state['stoch'].shape[0]* state['stoch'].shape[1], *state['stoch'].shape[2:])),
-                deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])))
+                deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])), 
+                log_prob = torch.reshape(state['log_prob'], (state['log_prob'].shape[0] * state['log_prob'].shape[1], 1))
+                )
         else:
             return dict(
                 mean = torch.reshape(state['mean'], (state['mean'].shape[0]* state['mean'].shape[1], *state['mean'].shape[2:])),
                 std = torch.reshape(state['std'], (state['std'].shape[0]* state['std'].shape[1], *state['std'].shape[2:])),
                 stoch = torch.reshape(state['stoch'], (state['stoch'].shape[0]* state['stoch'].shape[1], *state['stoch'].shape[2:])),
-                deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])))
+                deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])), 
+                log_prob = torch.reshape(state['log_prob'], (state['log_prob'].shape[0] * state['log_prob'].shape[1], 1))
+                )
 
 class ConvEncoder(nn.Module):
 
@@ -559,16 +587,6 @@ class OneHotDist(distributions.OneHotCategorical):
 
         return torch.reshape(ret, logits.shape[:-1])
 
-import math
-from numbers import Number
-from torch.distributions import Distribution, constraints
-from torch.distributions.utils import broadcast_all
-
-CONST_SQRT_2 = math.sqrt(2)
-CONST_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
-CONST_INV_SQRT_2 = 1 / math.sqrt(2)
-CONST_LOG_INV_SQRT_2PI = math.log(CONST_INV_SQRT_2PI)
-CONST_LOG_SQRT_2PI_E = 0.5 * math.log(2 * math.pi * math.e)
 
 class TruncatedStandardNormal(Distribution):
     """

@@ -43,11 +43,11 @@ critic_target_update_freq: 2
 # --------------------Coefficients and constants--------------------
 discount: 0.99
 init_temperature: 0.1
-alpha_lr: 1.0e-4
-alpha_beta: 0.5
 
 # -----------------------Saving and Restoring-----------------------
 max_videos_to_save: 2
 
 # -------------------------------DrQ-------------------------------
+alpha_beta: 0.9
+alpha_lr: 1.0e-3
 image_pad: 4

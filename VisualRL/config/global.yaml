@@ -1,7 +1,7 @@
 # Global configuration setting for VisualRL
 
 # ------------------------General parameters------------------------
-exp_name: "Reproduce-SACAE-WalkerWalk"
+exp_name: "Reproduce-Bird-WalkerWalk"
 
 # set as -1 for random seed
 seed: 0
@@ -13,7 +13,7 @@ gpu: 0
 agent: "sac_ae"
 
 #TODO: notice this!
-model_based: False
+model_based: True
 
 # ---------------------------Environment---------------------------
 env: "walker-walk"
@@ -25,12 +25,12 @@ max_episode_length: 1000
 
 # -----------------------------Training-----------------------------
 # 1000 for mf methods, 5000 for mb methods
-init_steps: 1000
+init_steps: 5000
 
 total_steps: 1000000
 
 # 1 for mf methods, 100 for mb methods
-update_steps: 1
+update_steps: 100
 
 collect_steps: 1000
 
