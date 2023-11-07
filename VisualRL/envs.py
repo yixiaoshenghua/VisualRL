@@ -12,7 +12,7 @@ except ImportError:
     print("gym not installed, trying gymnasium instead.")
     import gymnasium as gym
 
-DMC_ENV = ['cheetah', 'walker', 'hopper', 'finger', 'quadruped', 'reacher', 'ball']
+DMC_ENV = ['cheetah', 'walker', 'hopper', 'finger', 'quadruped', 'reacher', 'ball', 'cup', 'cartpole']
 GYM_ROBOT_ENV = ['Fetch']
 
 # -------------------------------- Make Environment from args ------------------------------------------

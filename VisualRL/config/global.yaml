@@ -1,60 +1,33 @@
 # Global configuration setting for VisualRL
 
 # ------------------------General parameters------------------------
-exp_name: "Reproduce-Bird-WalkerWalk"
+exp_name: "Reproduce-ReacherEasy"
 
 # set as -1 for random seed
-seed: 0
+seed: 2023
 
 # set as -1 for cpu training
-gpu: 0
-
-# ------------------------------Agent------------------------------
-agent: "sac_ae"
-
-#TODO: notice this!
-model_based: True
-
+gpu: 1
 # ---------------------------Environment---------------------------
-env: "walker-walk"
+env: "reacher-easy"
 camera_id: 0
 time_limit: 1000
-
-# ---------------------Data collection & replay--------------------
-max_episode_length: 1000
-
 # -----------------------------Training-----------------------------
-# 1000 for mf methods, 5000 for mb methods
-init_steps: 5000
-
 total_steps: 1000000
-
-# 1 for mf methods, 100 for mb methods
-update_steps: 100
-
 collect_steps: 1000
-
 # ------------------------Saving and logging------------------------
 # We recommend evaluating the agent every 25k steps for PlaNet, and every 10k steps for other agents.
 eval_freq: 10000
 eval_episodes: 10
-log_interval: 100
-save_tb: True
-
 save_video: False
-log_video_freq: -1
-max_videos_to_save: 2
+
+save_tb: True
+log_interval: 100
 
 save_data: False
 save_data_interval: 100000
-save_data_path: ''
 
 save_checkpoint: False
 save_checkpoint_interval: 100000
-save_checkpoint_path: ''
-# ------------------------Restore parameters------------------------
-restore_data: False
-restore_data_path: ''
 
-restore_checkpoint: False
-restore_checkpoint_path: ''
+# Recommended action repeat: 2 for Walker, Finger, 4 for Reacher, Cheetah, Ball in cup, 8 for Cartpole

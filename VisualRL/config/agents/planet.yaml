@@ -1,3 +1,5 @@
+# Agent name: PlaNet
+model_based: True
 # ---------------------------Environment---------------------------
 pre_transform_image_size: 64
 image_size: 64
@@ -16,6 +18,7 @@ buffer_size: 1000000
 batch_size: 50
 train_seq_length: 50
 init_steps: 5000
+update_steps: 100
 # ---------------------------World Model---------------------------
 # RSSM
 stoch_size: 30

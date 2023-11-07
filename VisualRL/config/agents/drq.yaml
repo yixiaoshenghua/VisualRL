@@ -1,16 +1,20 @@
 # Agent name: DrQ V1
-
+model_based: False
 # ---------------------------Environment---------------------------
 pre_transform_image_size: 84
 image_size: 84
 frame_stack: 3
 action_repeat: 2
-
+# -------------------------------DrQ-------------------------------
+alpha_beta: 0.9
+alpha_lr: 1.0e-3
+image_pad: 4
 # ---------------------Data collection & replay--------------------
 buffer_size: 100000
 # IMPORTANT: please use a batch size of 512 to reproduce the results in the paper. Hovewer, with a smaller batch size it still works well.
 batch_size: 512
-
+init_steps: 1000
+update_steps: 1
 # ---------------Network/Encoder/Decoder architecture---------------
 # Encoder
 encoder_type: "pixel"
@@ -22,7 +26,6 @@ builtin_encoder: True
 num_layers: 4
 num_filters: 32
 hidden_dim: 1024
-
 # ------------------------------Actor------------------------------
 # Optimization
 actor_lr: 1.0e-3
@@ -31,7 +34,6 @@ actor_beta: 0.9
 actor_log_std_min: -10
 actor_log_std_max: 2
 actor_update_freq: 2
-
 # ------------------------------Critic------------------------------
 # Optimization
 critic_lr: 1.0e-3
@@ -39,15 +41,10 @@ critic_beta: 0.9
 
 critic_tau: 0.01
 critic_target_update_freq: 2
-
 # --------------------Coefficients and constants--------------------
 discount: 0.99
 init_temperature: 0.1
-
 # -----------------------Saving and Restoring-----------------------
 max_videos_to_save: 2
-
-# -------------------------------DrQ-------------------------------
-alpha_beta: 0.9
-alpha_lr: 1.0e-3
-image_pad: 4
+restore: False
+policy_checkpoint_path: ''

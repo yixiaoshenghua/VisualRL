@@ -21,27 +21,29 @@ class AgentDrQ(AgentSACBase):
     def __init__(
         self, 
         obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
-        agent, 
+        agent, model_based, 
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
         pre_transform_image_size, image_size, frame_stack, 
-        buffer_size, batch_size, 
+        buffer_size, batch_size, init_steps, update_steps, 
         discount, 
         action_repeat, max_videos_to_save, 
+        restore, policy_checkpoint_path, 
         init_temperature, alpha_lr, alpha_beta, 
         image_pad
     ):
         super().__init__(
             obs_shape, action_shape, action_range, device, 
-            agent, 
+            agent, model_based, 
             encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
             actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
             critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
             pre_transform_image_size, image_size, frame_stack, 
-            buffer_size, batch_size, 
+            buffer_size, batch_size, init_steps, update_steps, 
             discount, 
             action_repeat, max_videos_to_save, 
+            restore, policy_checkpoint_path, 
             init_temperature, alpha_lr, alpha_beta
         )
         self.image_pad = image_pad
@@ -57,6 +59,15 @@ class AgentDrQ(AgentSACBase):
         self.log_alpha_optimizer = torch.optim.Adam(
             [self.log_alpha], lr=alpha_lr
         )
+
+        if self.restore:
+            print("Loading checkpoint from: %s" % self.policy_checkpoint_path)
+            try:
+                self.load(self.policy_checkpoint_path)
+                print("Model Loaded.")
+            except:
+                print("Failed to load checkpoint from: %s" % self.policy_checkpoint_path)
+            self.restore = False
 
         self.train()
         self.critic_target.train()
@@ -182,3 +193,28 @@ class AgentDrQ(AgentSACBase):
         torch.save(
             params, f"{model_dir}/drq_{step}.pt"
         )
+    
+    def save(self, model_dir):
+        torch.save(
+            {
+                'actor': self.actor.state_dict(), 
+                'critic': self.critic.state_dict(), 
+                'encoder': self.critic.encoder.state_dict(), 
+                'critic_target': self.critic_target.state_dict(), 
+                'alpha': self.log_alpha, 
+                'actor_optimizer': self.actor_optimizer.state_dict(), 
+                'critic_optimizer': self.critic_optimizer.state_dict(), 
+                'alpha_optimizer': self.log_alpha_optimizer.state_dict()
+            }, model_dir
+        )
+    
+    def load(self, model_dir):
+        checkpoint = torch.load(model_dir)
+        self.actor.load_state_dict(checkpoint['actor'])
+        self.critic.load_state_dict(checkpoint['critic'])
+        self.critic.encoder.load_state_dict(checkpoint['encoder'])
+        self.critic_target.load_state_dict(checkpoint['critic_target'])
+        self.log_alpha = checkpoint['alpha']
+        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+        self.log_alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer'])

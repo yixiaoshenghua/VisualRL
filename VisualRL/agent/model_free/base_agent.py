@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import copy
 import math
+import tqdm
 from typing import Any, Dict, Optional, Type, Union, List
 
 import utils.util as util
@@ -18,13 +19,14 @@ class AgentBase:
     def __init__(
         self, 
         obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
-        agent, 
+        agent, model_based, 
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
         pre_transform_image_size, image_size, frame_stack, 
-        buffer_size, batch_size, 
-        discount, action_repeat, max_videos_to_save
+        buffer_size, batch_size, init_steps, update_steps, 
+        discount, action_repeat, max_videos_to_save, 
+        restore, policy_checkpoint_path
         ):
         # ------------global config------------
         self.obs_shape = obs_shape
@@ -56,6 +58,9 @@ class AgentBase:
         self.discount = discount
         self.action_repeat = action_repeat
         self.max_videos_to_save = max_videos_to_save
+
+        self.restore = restore
+        self.policy_checkpoint_path = policy_checkpoint_path
 
         # CURL doesn't add the tanh nonlinearity to the output of the fc layer
         self.output_logits = True if self.agent == 'curl' else False
@@ -279,13 +284,14 @@ class AgentBase:
 
         return np.array(episode_rewards)
     
-    def evaluate(self, env, eval_episodes, render=False):
+    def evaluate(self, env, eval_episodes, step, video=None):
         episode_rew = np.zeros((eval_episodes))
-        video_images = [[] for _ in range(eval_episodes)]
+        # video_images = [[] for _ in range(eval_episodes)]
         self.train(False)
 
-        for i in range(eval_episodes):
+        for i in tqdm.tqdm(range(eval_episodes), desc='evaluating'):
             obs = env.reset()
+            video.init(enabled=(i < self.max_videos_to_save))
             done = False
 
             while not done:
@@ -294,12 +300,14 @@ class AgentBase:
                 next_obs, rew, done, _ = env.step(action)
                 episode_rew[i] += rew
 
-                if render:
-                    video_images[i].append(obs['image'].transpose(1, 2, 0).copy())
+                # if render:
+                #     video_images[i].append(obs['image'].transpose(1, 2, 0).copy())
+                video.record(env)
                 obs = next_obs
+            video.save('%d_%d.mp4' % (step, i))
         
         self.train(True)
-        return episode_rew, np.array(video_images[:self.max_videos_to_save])#, pred_videos # (T, H, W, C)
+        return episode_rew #, np.array(video_images[:self.max_videos_to_save]), pred_videos # (T, H, W, C)
     
     def collect_random_episodes(self, env, seed_steps):
 
@@ -345,24 +353,26 @@ class AgentSACBase(AgentBase):
     def __init__(
         self, 
         obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
-        agent, 
+        agent, model_based, 
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
         pre_transform_image_size, image_size, frame_stack, 
-        buffer_size, batch_size, 
+        buffer_size, batch_size, init_steps, update_steps, 
         discount, action_repeat, max_videos_to_save, 
+        restore, policy_checkpoint_path, 
         init_temperature, alpha_lr, alpha_beta
     ):
         super().__init__(
             obs_shape, action_shape, action_range, device, 
-            agent, 
+            agent, model_based, 
             encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
             actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
             critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
             pre_transform_image_size, image_size, frame_stack, 
-            buffer_size, batch_size, 
-            discount, action_repeat, max_videos_to_save
+            buffer_size, batch_size, init_steps, update_steps, 
+            discount, action_repeat, max_videos_to_save, 
+            restore, policy_checkpoint_path
         )
 
         self.init_temperature = init_temperature

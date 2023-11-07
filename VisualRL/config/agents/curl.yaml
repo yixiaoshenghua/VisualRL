@@ -1,15 +1,21 @@
 # Agent name: CURL
-
+model_based: False
 # ---------------------------Environment---------------------------
 pre_transform_image_size: 100
 image_size: 84
 frame_stack: 3
 action_repeat: 2
-
+# -------------------------------CURL-------------------------------
+encoder_lr: 1.0e-3
+cpc_update_freq: 1
+detach_encoder: False
+curl_latent_dim: 128
+data_augs: 'crop'
 # ---------------------Data collection & replay--------------------
 buffer_size: 100000
 batch_size: 512
-
+init_steps: 1000
+update_steps: 1
 # ---------------Network/Encoder/Decoder architecture---------------
 # Encoder
 encoder_type: "pixel"
@@ -21,7 +27,6 @@ builtin_encoder: True
 num_layers: 4
 num_filters: 32
 hidden_dim: 1024
-
 # ------------------------------Actor------------------------------
 # Optimization
 actor_lr: 1.0e-3
@@ -30,7 +35,6 @@ actor_beta: 0.9
 actor_log_std_min: -10
 actor_log_std_max: 2
 actor_update_freq: 2
-
 # ------------------------------Critic------------------------------
 # Optimization
 critic_lr: 1.0e-3
@@ -40,19 +44,12 @@ critic_beta: 0.9
 critic_tau: 0.01
 # try to change it to 1 and retain 0.01 above
 critic_target_update_freq: 2
-
 # --------------------Coefficients and constants--------------------
 discount: 0.99
 init_temperature: 0.1
 alpha_lr: 1.0e-4
 alpha_beta: 0.5
-
 # -----------------------Saving and Restoring-----------------------
 max_videos_to_save: 2
-
-# -------------------------------CURL-------------------------------
-encoder_lr: 1.0e-3
-cpc_update_freq: 1
-detach_encoder: False
-curl_latent_dim: 128
-data_augs: 'crop'
+restore: False
+policy_checkpoint_path: ''

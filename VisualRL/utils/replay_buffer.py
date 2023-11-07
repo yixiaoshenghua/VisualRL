@@ -13,7 +13,8 @@ def make_replay_buffer(
         action_shape, device, 
         agent, 
         pre_transform_image_size, image_size, frame_stack, 
-        buffer_size, batch_size, train_seq_length=None, image_pad=4
+        buffer_size, batch_size, train_seq_length=None, image_pad=4, 
+        store_state=False
 ):
     if agent == 'curl':
         replay_buffer = ReplayBuffer(
@@ -22,7 +23,8 @@ def make_replay_buffer(
             capacity=buffer_size,
             batch_size=batch_size,
             device=device,
-            image_size=image_size
+            image_size=image_size, 
+            store_state=store_state
         )
     else:
         replay_buffer = ReplayBuffer(
@@ -32,7 +34,8 @@ def make_replay_buffer(
             batch_size=batch_size, 
             device=device, 
             seq_len=train_seq_length, 
-            image_pad=image_pad
+            image_pad=image_pad, 
+            store_state=store_state
         )
     return replay_buffer
 
@@ -42,7 +45,7 @@ class ReplayBuffer(Dataset):
     def __init__(
         self, obs_shape, action_shape, capacity, batch_size, device,
         seq_len=None, image_pad=4,
-        path_len=None, image_size=84, transform=None
+        path_len=None, image_size=84, transform=None, store_state=False
     ):
         self.capacity = capacity
         self.batch_size = batch_size
@@ -52,6 +55,7 @@ class ReplayBuffer(Dataset):
             kornia.augmentation.RandomCrop((obs_shape[-1], obs_shape[-1])))
         self.image_size = image_size
         self.transform = transform
+        self.store_state = store_state
 
         # the proprioceptive obs is stored as float32, pixels obs as uint8
         obs_dtype = np.float32 if len(obs_shape) == 1 else np.uint8
@@ -61,6 +65,9 @@ class ReplayBuffer(Dataset):
         self.actions = np.empty((capacity, *action_shape), dtype=np.float32)
         self.rewards = np.empty((capacity, 1), dtype=np.float32)
         self.not_dones = np.empty((capacity, 1), dtype=np.float32)
+        if self.store_state:
+            self.underlying_states = np.empty((capacity, 1), dtype=object)
+            self.underlying_next_states = np.empty((capacity, 1), dtype=object)
 
         self.idx = 0
         self.last_save = 0
@@ -76,6 +83,11 @@ class ReplayBuffer(Dataset):
         np.copyto(self.rewards[self.idx], reward)
         np.copyto(self.next_obses[self.idx], next_obs['image'])
         np.copyto(self.not_dones[self.idx], 1-done)
+        if self.store_state:
+            state = {k: v for k, v in obs.items() if k != 'image'}
+            next_state = {k: v for k, v in next_obs.items() if k != 'image'}
+            np.copyto(self.underlying_states[self.idx], state)
+            np.copyto(self.underlying_next_states[self.idx], next_state)
 
         self.idx = (self.idx + 1) % self.capacity
         self.full = self.full or self.idx == 0
@@ -235,18 +247,52 @@ class ReplayBuffer(Dataset):
     def save(self, save_dir):
         if self.idx == self.last_save:
             return
-        path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, self.idx))
-        payload = [
-            self.obses[self.last_save:self.idx],
-            self.next_obses[self.last_save:self.idx],
-            self.actions[self.last_save:self.idx],
-            self.rewards[self.last_save:self.idx],
-            self.not_dones[self.last_save:self.idx]
-        ]
-        self.last_save = self.idx
+        elif self.idx < self.last_save:
+            self.last_idx = self.last_save % self.capacity
+            rounds = self.last_save // self.capacity
+            if self.idx < self.last_idx:
+                path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, (rounds+1)*self.capacity + self.idx))
+                payload = [
+                    np.concatenate((self.obses[self.last_idx:], self.obses[:self.idx]), axis=0), 
+                    np.concatenate((self.next_obses[self.last_idx:], self.next_obses[:self.idx]), axis=0), 
+                    np.concatenate((self.actions[self.last_idx:], self.actions[:self.idx]), axis=0), 
+                    np.concatenate((self.rewards[self.last_idx:], self.rewards[:self.idx]), axis=0), 
+                    np.concatenate((self.not_dones[self.last_idx:], self.not_dones[:self.idx]), axis=0)
+                ]
+                if self.store_state:
+                    payload.append(np.concatenate((self.underlying_states[self.last_idx:], self.underlying_states[:self.idx]), axis=0))
+                    payload.append(np.concatenate((self.underlying_next_states[self.last_idx:], self.underlying_next_states[:self.idx]), axis=0))
+            else:
+                path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, rounds*self.capacity + self.idx))
+                payload = [
+                    self.obses[self.last_idx:self.idx], 
+                    self.next_obses[self.last_idx:self.idx], 
+                    self.actions[self.last_idx:self.idx], 
+                    self.rewards[self.last_idx:self.idx], 
+                    self.not_dones[self.last_idx:self.idx]
+                ]
+                if self.store_state:
+                    payload.append(self.underlying_states[self.last_idx:self.idx])
+                    payload.append(self.underlying_next_states[self.last_idx:self.idx])
+            self.last_save += self.idx + self.capacity - self.last_idx
+        else:
+            path = os.path.join(save_dir, '%d_%d.pt' % (self.last_save, self.idx))
+            payload = [
+                self.obses[self.last_save:self.idx],
+                self.next_obses[self.last_save:self.idx],
+                self.actions[self.last_save:self.idx],
+                self.rewards[self.last_save:self.idx],
+                self.not_dones[self.last_save:self.idx]
+            ]
+            if self.store_state:
+                payload.append(self.underlying_states[self.last_save:self.idx])
+                payload.append(self.underlying_next_states[self.last_save:self.idx])
+            self.last_save = self.idx
+        
         torch.save(payload, path)
 
     def load(self, save_dir):
+        #TODO: Loaded episodes must not overflow the buffer
         chunks = os.listdir(save_dir)
         chucks = sorted(chunks, key=lambda x: int(x.split('_')[0]))
         for chunk in chucks:
@@ -259,7 +305,11 @@ class ReplayBuffer(Dataset):
             self.actions[start:end] = payload[2]
             self.rewards[start:end] = payload[3]
             self.not_dones[start:end] = payload[4]
-            self.idx = end
+            if self.store_state:
+                # If you want to load underlying states, you need to set store_state=True
+                self.underlying_states[start:end] = payload[5]
+                self.underlying_next_states[start:end] = payload[6]
+            self.idx = (end+1) % self.capacity
 
     def __getitem__(self, idx):
         idx = np.random.randint(

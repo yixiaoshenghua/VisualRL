@@ -17,13 +17,13 @@ class AgentDreamer:
     def __init__(
             self, 
             obs_shape, action_shape, action_range, device, 
-            agent, 
+            agent, model_based, 
             actor_grad, actor_dist, actor_min_std, actor_init_std, 
             slow_target, slow_target_update, slow_target_fraction, 
             actor_lr, critic_lr, 
             imagine_horizon, discount, td_lambda, 
             action_noise, exploration_decay, exploration_min, 
-            pre_transform_image_size, image_size, frame_stack, 
+            pre_transform_image_size, image_size, frame_stack, update_steps, 
             buffer_size, batch_size, train_seq_length, init_steps, action_repeat, 
             stoch_size, deter_size, hidden_size, obs_embed_size, num_units, 
             cnn_activation_function, dense_activation_function, 
@@ -358,15 +358,16 @@ class AgentDreamer:
 
         return features, actions, rewards
 
-    def evaluate(self, env, eval_episodes, render=False):
+    def evaluate(self, env, eval_episodes, step, video=None):
 
         episode_rew = np.zeros((eval_episodes))
 
-        video_images = [[] for _ in range(eval_episodes)]
+        # video_images = [[] for _ in range(eval_episodes)]
         self.train(False)
 
         for i in tqdm.tqdm(range(eval_episodes), desc='evaluating'):
             obs = env.reset()
+            video.init(enabled=(i < self.max_videos_to_save))
             done = False
             rssm_state = self.world_model.reset()
 
@@ -377,9 +378,11 @@ class AgentDreamer:
                 next_obs, rew, done, _ = env.step(action)
                 episode_rew[i] += rew
 
-                if render:
-                    video_images[i].append(obs['image'].transpose(1, 2, 0).copy())
+                # if render:
+                #     video_images[i].append(obs['image'].transpose(1, 2, 0).copy())
+                video.record(env)
                 obs = next_obs
+            video.save('%d_%d.mp4' % (step, i))
 
         # video prediction
         # obs, acs, rews, terms = self.data_buffer.sample()
@@ -389,7 +392,7 @@ class AgentDreamer:
         # pred_videos = self.video_pred(obs, acs, nonterms)
         
         self.train(True)
-        return episode_rew, np.array(video_images[:self.max_videos_to_save])#, pred_videos # (T, H, W, C)
+        return episode_rew #, np.array(video_images[:self.max_videos_to_save]), pred_videos # (T, H, W, C)
 
     def collect_random_episodes(self, env, seed_steps):
 

@@ -21,14 +21,15 @@ class AgentSACAE(AgentSACBase):
     def __init__(
         self, 
         obs_shape: int, action_shape: int, action_range: list, device: Union[torch.device, str], 
-        agent, 
+        agent, model_based, 
         encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
         actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
         critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
         pre_transform_image_size, image_size, frame_stack, 
-        buffer_size, batch_size, 
+        buffer_size, batch_size, init_steps, update_steps, 
         discount, 
         action_repeat, max_videos_to_save, 
+        restore, policy_checkpoint_path, 
         init_temperature, alpha_lr, alpha_beta, 
         encoder_lr: float = 1e-3,
         decoder_type: str = 'pixel',
@@ -39,14 +40,15 @@ class AgentSACAE(AgentSACBase):
     ):
         super().__init__(
             obs_shape, action_shape, action_range, device, 
-            agent, 
+            agent, model_based, 
             encoder_type, encoder_feature_dim, encoder_tau, num_layers, num_filters, hidden_dim, builtin_encoder, 
             actor_lr, actor_beta, actor_log_std_min, actor_log_std_max, actor_update_freq, 
             critic_lr, critic_beta, critic_tau, critic_target_update_freq, 
             pre_transform_image_size, image_size, frame_stack, 
-            buffer_size, batch_size, 
+            buffer_size, batch_size, init_steps, update_steps, 
             discount, 
             action_repeat, max_videos_to_save, 
+            restore, policy_checkpoint_path, 
             init_temperature, alpha_lr, alpha_beta
         )
 
@@ -70,6 +72,14 @@ class AgentSACAE(AgentSACBase):
                 lr=decoder_lr,
                 weight_decay=decoder_weight_lambda
             )
+        if self.restore:
+            print("Loading checkpoint from: %s" % self.policy_checkpoint_path)
+            try:
+                self.load(self.policy_checkpoint_path)
+                print("Model Loaded.")
+            except:
+                print("Failed to load checkpoint from: %s" % self.policy_checkpoint_path)
+            self.restore = False
 
         self.train()
         self.critic_target.train()
@@ -155,27 +165,35 @@ class AgentSACAE(AgentSACBase):
         
         return loss_dict
 
-    def save(self, model_dir, step):
+    def save(self, model_dir):
         torch.save(
-            self.actor.state_dict(), '%s/actor_%s.pt' % (model_dir, step)
+            {
+                'actor': self.actor.state_dict(), 
+                'critic': self.critic.state_dict(), 
+                'encoder': self.critic.encoder.state_dict(), 
+                'decoder': self.decoder.state_dict() if self.decoder is not None else None, 
+                'critic_target': self.critic_target.state_dict(), 
+                'alpha': self.log_alpha, 
+                'actor_optimizer': self.actor_optimizer.state_dict(), 
+                'critic_optimizer': self.critic_optimizer.state_dict(), 
+                'encoder_optimizer': self.encoder_optimizer.state_dict(), 
+                'decoder_optimizer': self.decoder_optimizer.state_dict() if self.decoder is not None else None, 
+                'alpha_optimizer': self.log_alpha_optimizer.state_dict()
+            }, model_dir
         )
-        torch.save(
-            self.critic.state_dict(), '%s/critic_%s.pt' % (model_dir, step)
-        )
-        if self.decoder is not None:
-            torch.save(
-                self.decoder.state_dict(),
-                '%s/decoder_%s.pt' % (model_dir, step)
-            )
 
-    def load(self, model_dir, step):
-        self.actor.load_state_dict(
-            torch.load('%s/actor_%s.pt' % (model_dir, step))
-        )
-        self.critic.load_state_dict(
-            torch.load('%s/critic_%s.pt' % (model_dir, step))
-        )
+    def load(self, model_dir):
+        checkpoint = torch.load(model_dir)
+        self.actor.load_state_dict(checkpoint['actor'])
+        self.critic.load_state_dict(checkpoint['critic'])
+        self.critic.encoder.load_state_dict(checkpoint['encoder'])
+        self.critic_target.load_state_dict(checkpoint['critic_target'])
+        self.log_alpha = checkpoint['alpha']
+        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+        self.encoder_optimizer.load_state_dict(checkpoint['encoder_optimizer'])
+        self.log_alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer'])
         if self.decoder is not None:
-            self.decoder.load_state_dict(
-                torch.load('%s/decoder_%s.pt' % (model_dir, step))
-            )
+            self.decoder.load_state_dict(checkpoint['decoder'])
+            self.decoder_optimizer.load_state_dict(checkpoint['decoder_optimizer'])
+

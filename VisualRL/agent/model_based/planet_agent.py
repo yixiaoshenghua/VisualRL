@@ -11,10 +11,10 @@ class AgentPlaNet:
     def __init__(
             self, 
             obs_shape, action_shape, action_range, device, 
-            agent, 
+            agent, model_based, 
             planning_horizon, optimization_iters, candidates, top_candidates, 
             action_noise, 
-            pre_transform_image_size, image_size, frame_stack, 
+            pre_transform_image_size, image_size, frame_stack, update_steps, 
             buffer_size, batch_size, train_seq_length, init_steps, action_repeat, 
             stoch_size, deter_size, hidden_size, obs_embed_size, num_units, 
             cnn_activation_function, dense_activation_function, 
@@ -110,7 +110,6 @@ class AgentPlaNet:
         self.world_model_modules = self.world_model.world_model_modules
 
         if restore:
-            self.load(self.restore_policy_path)
             self.world_model.load(self.restore_wm_path)
     
     def update(self):

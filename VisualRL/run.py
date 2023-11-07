@@ -66,8 +66,10 @@ AGENTS = {
 def get_args():
     parser = argparse.ArgumentParser(description='Reproduce of multiple Visual RL algorithms.')
     parser.add_argument('--group', type=str, help='Agent name')
+    config_args, cmd_args = parser.parse_known_args()
     
-    agent_name = parser.parse_args().group.lower()
+    agent_name = config_args.group.lower()
+    assert agent_name in AGENTS, f"Agent {agent_name} is not supported."   
     
     global_config_path = 'VisualRL/config/global.yaml'
     agent_config_path = f'VisualRL/config/agents/{agent_name}.yaml'
@@ -80,7 +82,17 @@ def get_args():
         agent_config = yaml.safe_load(f)
         args.agent_config = agent_config
         
+    cmd_args = dict(zip(cmd_args[::2], cmd_args[1::2]))
+    for k, v in cmd_args.items():
+        if k.startswith('--'):
+            k = k[2:]
+        args.__setattr__(k, type(getattr(args, k))(v))
+
+    # Shared arguments
     args.agent = agent_name
+    args.model_based = agent_config['model_based']
+    args.init_steps = agent_config['init_steps']
+    args.update_steps = agent_config['update_steps']
     args.pre_transform_image_size = agent_config['pre_transform_image_size']
     args.image_size = agent_config['image_size']
     args.action_repeat = agent_config['action_repeat']
@@ -88,24 +100,22 @@ def get_args():
     
     return args
 
-def make_agent(agent_name, config, obs_shape, action_shape, action_range, device, image_channel=3):
-    if agent_name in AGENTS:       
-        agent = AGENTS[agent_name](
-            obs_shape=obs_shape, 
-            action_shape=action_shape, 
-            action_range=action_range, 
-            device=device, 
-            agent=agent_name, 
-            **config
-        )
-    else:
-        assert f"Agent {agent_name} is not supported."
+def make_agent(agent_name, config, obs_shape, action_shape, action_range, device):
+    agent = AGENTS[agent_name](
+        obs_shape=obs_shape, 
+        action_shape=action_shape, 
+        action_range=action_range, 
+        device=device, 
+        agent=agent_name, 
+        **config
+    )
     return agent
 
 def make_logdir(env, agent, exp_name, seed):
     logdir_root = os.path.join(os.getcwd(), 'logdir')
     ts = time.strftime("%m-%d-%H-%M-%S", time.gmtime())
     logdir = os.path.join(logdir_root, env, agent, f"{exp_name}-s-{seed}-{ts}")
+    #TODO: You can set any directory you want here
     video_dir = os.path.join(logdir, 'video')
     model_dir = os.path.join(logdir, 'model')
     buffer_dir = os.path.join(logdir, 'buffer')
@@ -173,7 +183,7 @@ def main():
     # assert 0
 
     # make logger
-    video = VideoRecorder(video_dir if args.save_video else None)
+    video = VideoRecorder(video_dir if args.save_video else None, height=256, width=256, camera_id=args.camera_id, fps=30)
     L = make_log(logdir, args.save_tb)
 
     # make train and eval envs
@@ -221,7 +231,7 @@ def main():
     L.log_scalars(initial_log, 0)
     print('****************************************')
 
-    episode = args.init_steps // args.max_episode_length
+    episode = args.init_steps // args.time_limit
     step = args.init_steps
     start_time = time.time()
     
@@ -242,6 +252,7 @@ def main():
         
         #TODO: For model-free methods, update is executed every step, so we need to add update into the func below
         train_rews = agent.act_and_collect_data(train_env, args.collect_steps//args.action_repeat, step, L, args.log_interval, num_updates)
+        step += args.collect_steps
         
         episode_log = {
                 'train/episode_duration': time.time() - start_time,
@@ -256,7 +267,7 @@ def main():
         print('****************************************')
 
         if step % args.eval_freq == 0:
-            episode_rews, video_images = agent.evaluate(test_env, args.eval_episodes)
+            episode_rews = agent.evaluate(test_env, args.eval_episodes, step, video)
 
             eval_log = {
                 'eval/avg_reward': np.mean(episode_rews),
@@ -268,12 +279,11 @@ def main():
         
         episode += 1
         start_time = time.time()
-        step += args.collect_steps
 
         # save model and replay buffer
-        if args.save_checkpoint and ((step+1) % args.save_checkpoint_interval == 0):
+        if args.save_checkpoint and (step % args.save_checkpoint_interval == 0):
             agent.save(os.path.join(model_dir, 'checkpoint{}.pt'.format(step)))
-        if args.save_data and ((step+1) % args.save_data_interval == 0):
+        if args.save_data and (step % args.save_data_interval == 0):
             agent.save_data(os.path.join(buffer_dir, 'buffer{}.pt'.format(step))) # [TODO] not implemented yet
 
     # for step in range(0, args.total_steps, args.action_repeat):
