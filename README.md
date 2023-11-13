@@ -23,7 +23,33 @@ If you use any content of this repo for your work, please cite:
 
 ## Introduction
 
+Visual reinforcement learning focuses on addressing the challenge of training agents in reinforcement learning tasks where the input information is visual, typically in the form of image or video frames. In traditional reinforcement learning, agents usually receive structed and numerical input data, such as state vectors. However, in many real-world scenarios, the input is high-dimensional visual information, instead of states. Visual RL
+aims to enable agents to learn and make decisions from visual input.
+
 ## Methods Implemented
+
+Model-based:
+
+- **BIRD:** Bridging Imagination and Reality for Model-Based Deep Reinforcement Learning. NeurIPS 2020. [[paper](https://arxiv.org/abs/2010.12142)]
+- **Dreamer:** 
+  - **Dreamerv1:** Dream to Control: Learning Behaviors by Latent Imagination. ICLR 2020 [[paper](https://arxiv.org/abs/1912.01603)]
+  - **Dreamerv2:** 
+- **PLANET:** Learning Latent Dynamics for Planning from Pixels
+. ICML 2019. [[paper](https://arxiv.org/abs/1811.04551)]
+- **TIA:** Learning Task Informed Abstractions. PMLR 2021. [[paper](https://arxiv.org/abs/2106.15612)]
+- **World Model:**
+
+Model-free:
+
+- **Baseline model:**
+- **CURL:** CURL: Contrastive Unsupervised Representations for Reinforcement Learning. PMLR 2020. [[paper](https://arxiv.org/abs/2004.04136)]
+- **DBC:** Learning Invariant Representations for Reinforcement Learning without Reconstruction. ICLR 2021. [[paper](https://arxiv.org/abs/2006.10742)]
+- **DeepMDP:** DeepMDP: Learning Continuous Latent Space Models for Representation Learning. PMLR 2019. [[paper](https://arxiv.org/abs/1906.02736)]
+- **DRIBO:** DRIBO: Robust Deep Reinforcement Learning via Multi-View Information Bottleneck. PMLR 2022. [[paper](https://arxiv.org/abs/2102.13268)]
+- **DRQ:** Regularizing Deep Reinforcement Learning from Pixels. ICLR 2021. [[paper](https://arxiv.org/pdf/2004.13649.pdf)]
+- **FLARE:** Reinforcement Learning with Latent Flow. NeurIPS 2021. [[paper](https://arxiv.org/abs/2101.01857)]
+- **RAD:** Reinforcement Learning with Augmented Data. NeurIPS 2020. [[paper](https://arxiv.org/abs/2004.14990)]
+- **SAC+AE:** Improving Sample Efficiency in Model-Free Reinforcement Learning from Images. AAAI 2021. [[paper](https://arxiv.org/pdf/1910.01741.pdf)]
 
 ## Reproduced Result
 
