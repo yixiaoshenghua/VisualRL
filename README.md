@@ -17,7 +17,13 @@ This is PyTorch implementation of Visual Reinforcement Learning.
 ## Citation
 If you use this repo in your research, please consider citing the paper as follows
 ```
-
+@misc{wan2024visualrl,
+  author = {Wan, Shenghua and Sun, Hai-Hang and Shao, Minghao and Huang, Kaichen and Yu, Rui},
+  title = {{VisualRL}: A PyTorch Framework for Visual Reinforcement Learning},
+  year = {2024},
+  howpublished = {\url{https://github.com/yixiaoshenghua/VisualRL}},
+  note = {Version: Commit 9393ac5 (Oct 8, 2024)}
+}
 ```
 
 ## Requirements
